@@ -38,7 +38,7 @@ netstat -ano | findstr ":8188 " | findstr "LISTENING" >nul
 if errorlevel 1 (
   if exist "%COMFYUI_PATH%\.venv\Scripts\python.exe" (
     echo Starting ComfyUI from %COMFYUI_PATH%
-    start "Bramble ComfyUI" cmd /k "cd /d \"%COMFYUI_PATH%\" && .\.venv\Scripts\python.exe main.py --listen 127.0.0.1 --port 8188"
+    start "Bramble ComfyUI" cmd /k "pushd ""%COMFYUI_PATH%"" && .\.venv\Scripts\python.exe main.py --listen 127.0.0.1 --port 8188"
   ) else (
     echo [WARN] ComfyUI not found at %COMFYUI_PATH%
   )
@@ -46,12 +46,12 @@ if errorlevel 1 (
 
 netstat -ano | findstr ":8000 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Backend" cmd /k "cd /d \"%~dp0backend\" && .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+  start "Bramble Backend" cmd /k "pushd ""%~dp0backend"" && .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
 ) else echo [OK] Backend already running
 
 netstat -ano | findstr ":5173 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Frontend" cmd /k "cd /d \"%~dp0frontend\" && npm run dev -- --host 127.0.0.1 --port 5173"
+  start "Bramble Frontend" cmd /k "pushd ""%~dp0frontend"" && npm run dev -- --host 127.0.0.1 --port 5173"
 ) else echo [OK] Frontend already running
 
 timeout /t 5 /nobreak >nul
