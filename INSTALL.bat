@@ -3,10 +3,14 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 title Bramble Videos - Install
 
+set "LOG=%~dp0install.log"
+
 echo ============================================================
 echo BRAMBLE VIDEOS - LOCAL INSTALLER
 echo ============================================================
+echo Install started %date% %time% > "%LOG%"
 
+echo [1/7] Checking required programs...
 where python >nul 2>nul
 if errorlevel 1 goto :missing_python
 where node >nul 2>nul
@@ -22,9 +26,13 @@ echo [OK] Python
 python --version
 echo [OK] Node
 node --version
+echo [OK] npm
+call npm --version
 echo [OK] FFmpeg
 ffmpeg -version | findstr /b "ffmpeg version"
 
+echo.
+echo [2/7] Checking environment file...
 if not exist ".env" (
   copy /y ".env.example" ".env" >nul
   echo [OK] Created .env from .env.example
@@ -32,37 +40,68 @@ if not exist ".env" (
   echo [SKIP] Existing .env kept untouched
 )
 
+echo.
+echo [3/7] Preparing backend Python environment...
+if exist "backend\.venv" if not exist "backend\.venv\Scripts\python.exe" (
+  echo [WARN] Broken backend virtual environment found. Rebuilding it...
+  rmdir /s /q "backend\.venv"
+)
+
 if not exist "backend\.venv\Scripts\python.exe" (
   echo Creating backend virtual environment...
-  python -m venv backend\.venv
+  python -m venv "backend\.venv" >> "%LOG%" 2>&1
   if errorlevel 1 goto :fail
 ) else (
   echo [SKIP] Backend virtual environment already exists
 )
 
-call backend\.venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-if errorlevel 1 goto :fail_active
-python -m pip install -r backend\requirements.txt
-if errorlevel 1 goto :fail_active
-deactivate
-
-if exist "frontend\node_modules" (
-  echo [SKIP] frontend\node_modules already exists
-) else (
-  pushd frontend
-  call npm install
-  if errorlevel 1 (
-    popd
-    goto :fail
-  )
-  popd
+if not exist "backend\.venv\Scripts\python.exe" (
+  echo [ERROR] Python virtual environment was not created correctly.
+  goto :fail
 )
 
-if not exist storage mkdir storage
-if not exist storage\assets mkdir storage\assets
-if not exist storage\projects mkdir storage\projects
-if not exist storage\uploads mkdir storage\uploads
+echo.
+echo [4/7] Installing backend packages...
+"backend\.venv\Scripts\python.exe" -m pip install --upgrade pip
+if errorlevel 1 goto :fail
+"backend\.venv\Scripts\python.exe" -m pip install -r "backend\requirements.txt"
+if errorlevel 1 goto :fail
+
+"backend\.venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, pydantic, PIL" >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Backend package verification failed.
+  goto :fail
+)
+echo [OK] Backend packages verified
+
+echo.
+echo [5/7] Installing frontend packages...
+if exist "frontend\node_modules\.bin\vite.cmd" (
+  echo [SKIP] Frontend packages already installed
+) else (
+  if exist "frontend\node_modules" (
+    echo [WARN] Incomplete frontend node_modules found. Rebuilding it...
+    rmdir /s /q "frontend\node_modules"
+  )
+  pushd "frontend"
+  call npm install
+  set "NPM_RESULT=%ERRORLEVEL%"
+  popd
+  if not "%NPM_RESULT%"=="0" goto :fail
+)
+
+if not exist "frontend\node_modules\.bin\vite.cmd" (
+  echo [ERROR] Frontend package installation did not create Vite.
+  goto :fail
+)
+echo [OK] Frontend packages verified
+
+echo.
+echo [6/7] Creating storage folders...
+if not exist "storage" mkdir "storage"
+if not exist "storage\assets" mkdir "storage\assets"
+if not exist "storage\projects" mkdir "storage\projects"
+if not exist "storage\uploads" mkdir "storage\uploads"
 
 echo.
 echo Checking AMD hardware video encoder...
@@ -88,24 +127,35 @@ if errorlevel 1 (
 )
 
 echo.
-echo Running quick code validation...
+echo [7/7] Running code validation...
 call TEST.bat /quiet
 if errorlevel 1 (
-  echo [WARN] Installation completed, but the validation step reported an error.
-  echo Run TEST.bat again to see the details.
+  echo [ERROR] Validation failed. Installation is not being marked complete.
+  goto :fail
 )
 
+if not exist "backend\.venv\Scripts\python.exe" goto :fail
+if not exist "frontend\node_modules\.bin\vite.cmd" goto :fail
+
+> ".bramble-installed" echo Installed %date% %time%
+
 echo.
-echo INSTALL COMPLETE.
+echo ============================================================
+echo INSTALL COMPLETE - EVERYTHING VERIFIED
+echo ============================================================
 echo Double-click START.bat.
+echo.
 pause
 exit /b 0
 
-:fail_active
-deactivate
 :fail
 echo.
-echo [ERROR] Installation failed. Read the error above.
+echo ============================================================
+echo [ERROR] INSTALLATION FAILED
+echo ============================================================
+echo The installation was NOT marked complete.
+echo Check the error above and install.log if needed.
+if exist ".bramble-installed" del /q ".bramble-installed" >nul 2>nul
 pause
 exit /b 1
 
