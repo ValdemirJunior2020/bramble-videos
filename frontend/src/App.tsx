@@ -4,118 +4,67 @@ type Asset={id:string,name:string,type:string,aliases:string[],description:strin
 type Scene={scene_number:number,narration:string,characters:string[],location:string,emotion:string,action:string,image_prompt:string,image_path?:string,duration_seconds:number}
 type Project={id:string,title:string,script:string,language:string,aspect:string,voice:string,consistency_lock:boolean,scenes:Scene[],state:string,progress:number,stage:string,error?:string,output_path?:string,video_encoder?:string}
 const API='http://127.0.0.1:8010/api'
+const styles=['Calm','Documentary','Warm','Inspirational','Emotional','Dramatic','Sermon']
 
 export default function App(){
   const [tab,setTab]=useState<'studio'|'assets'|'system'>('studio')
-  const [assets,setAssets]=useState<Asset[]>([])
-  const [voices,setVoices]=useState<any[]>([])
-  const [health,setHealth]=useState<any>({})
-  const [title,setTitle]=useState('Bramble & Grace Episode')
-  const [script,setScript]=useState('')
-  const [language,setLanguage]=useState('en')
-  const [aspect,setAspect]=useState('16:9')
-  const [customWidth,setCustomWidth]=useState(1280)
-  const [customHeight,setCustomHeight]=useState(720)
-  const [voice,setVoice]=useState('')
-  const [lock,setLock]=useState(true)
-  const [project,setProject]=useState<Project|null>(null)
-  const [busy,setBusy]=useState(false)
-  const [musicPath,setMusicPath]=useState('')
-  const [assetName,setAssetName]=useState('Bramble')
-  const [assetType,setAssetType]=useState('character')
-  const [assetFiles,setAssetFiles]=useState<File[]>([])
+  const [assets,setAssets]=useState<Asset[]>([]),[voices,setVoices]=useState<any[]>([]),[health,setHealth]=useState<any>({})
+  const [title,setTitle]=useState('Bramble & Grace Episode'),[script,setScript]=useState(''),[language,setLanguage]=useState('en'),[aspect,setAspect]=useState('16:9')
+  const [customWidth,setCustomWidth]=useState(1920),[customHeight,setCustomHeight]=useState(1080),[voice,setVoice]=useState(''),[narrationStyle,setNarrationStyle]=useState('Warm')
+  const [referenceVoicePath,setReferenceVoicePath]=useState(''),[musicPath,setMusicPath]=useState(''),[musicVolume,setMusicVolume]=useState(.08),[watermarkPath,setWatermarkPath]=useState('')
+  const [watermarkPosition,setWatermarkPosition]=useState('bottom-right'),[watermarkOpacity,setWatermarkOpacity]=useState(.75),[watermarkWidth,setWatermarkWidth]=useState(14)
+  const [subtitlesEnabled,setSubtitlesEnabled]=useState(true),[subtitleFont,setSubtitleFont]=useState('Arial'),[subtitleSize,setSubtitleSize]=useState(22),[subtitlePosition,setSubtitlePosition]=useState('bottom')
+  const [subtitleColor,setSubtitleColor]=useState('#FFFFFF'),[subtitleStrokeColor,setSubtitleStrokeColor]=useState('#000000'),[subtitleStrokeWidth,setSubtitleStrokeWidth]=useState(3)
+  const [transition,setTransition]=useState('Gentle Fade'),[lock,setLock]=useState(true),[project,setProject]=useState<Project|null>(null),[busy,setBusy]=useState(false)
+  const [assetName,setAssetName]=useState('Bramble'),[assetType,setAssetType]=useState('character'),[assetFiles,setAssetFiles]=useState<File[]>([])
   const chars=useMemo(()=>assets.filter(a=>a.type==='character'),[assets])
 
-  async function refresh(){
-    try{setAssets(await (await fetch(`${API}/assets`)).json())}catch{}
-    try{setVoices(await (await fetch(`${API}/voices`)).json())}catch{}
-    try{setHealth(await (await fetch(`${API}/health`)).json())}catch{}
-  }
+  async function refresh(){try{setAssets(await (await fetch(`${API}/assets`)).json())}catch{} try{setVoices(await (await fetch(`${API}/voices`)).json())}catch{} try{setHealth(await (await fetch(`${API}/health`)).json())}catch{}}
   useEffect(()=>{refresh()},[])
-  useEffect(()=>{
-    if(!project || project.state!=='rendering')return
-    const t=setInterval(async()=>{const p=await (await fetch(`${API}/projects/${project.id}`)).json();setProject(p)},1800)
-    return()=>clearInterval(t)
-  },[project?.id,project?.state])
+  useEffect(()=>{if(!project||project.state!=='rendering')return;const t=setInterval(async()=>setProject(await (await fetch(`${API}/projects/${project.id}`)).json()),1800);return()=>clearInterval(t)},[project?.id,project?.state])
 
-  async function uploadGeneric(file:File){
-    const f=new FormData();f.append('file',file)
-    const r=await fetch(`${API}/uploads`,{method:'POST',body:f});const data=await r.json()
-    if(!r.ok)throw new Error(data.detail||'Upload failed')
-    return data.path as string
-  }
-
-  async function uploadMusic(file:File|null){
-    if(!file){setMusicPath('');return}
-    try{setMusicPath(await uploadGeneric(file))}catch(e:any){alert(e.message)}
-  }
-
-  async function plan(){
-    if(!script.trim())return alert('Paste the episode script first.')
-    setBusy(true)
-    try{
-      const r=await fetch(`${API}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,script,language,aspect,custom_width:aspect==='custom'?customWidth:null,custom_height:aspect==='custom'?customHeight:null,voice,narration_style:'Warm',consistency_lock:lock,generate_images:true,transition:'Gentle Fade',background_music_path:musicPath||null,music_volume:0.08})})
-      const data=await r.json(); if(!r.ok)throw new Error(data.detail||'Planning failed'); setProject(data)
-    }catch(e:any){alert(e.message)}finally{setBusy(false)}
-  }
-
-  async function render(){
-    if(!project)return
-    const r=await fetch(`${API}/projects/${project.id}/render`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({regenerate_all_images:false})})
-    const data=await r.json(); if(!r.ok)return alert(data.detail||'Render failed')
-    setProject({...project,state:'rendering',stage:'Starting',progress:1})
-  }
-
-  async function saveScene(scene:Scene){
-    if(!project)return
-    const r=await fetch(`${API}/projects/${project.id}/scenes/${scene.scene_number}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({narration:scene.narration,characters:scene.characters,location:scene.location,emotion:scene.emotion,action:scene.action,image_prompt:scene.image_prompt})})
-    const updated=await r.json(); if(!r.ok)return alert(updated.detail||'Save failed')
-    setProject({...project,scenes:project.scenes.map(s=>s.scene_number===updated.scene_number?updated:s)})
-  }
-
-  async function regen(scene:Scene){
-    if(!project)return
-    setBusy(true)
-    try{
-      await saveScene(scene)
-      const r=await fetch(`${API}/projects/${project.id}/scenes/${scene.scene_number}/regenerate`,{method:'POST'})
-      const data=await r.json();if(!r.ok)throw new Error(data.detail||'Generation failed')
-      setProject(prev=>prev?{...prev,scenes:prev.scenes.map(s=>s.scene_number===data.scene_number?data:s)}:prev)
-    }catch(e:any){alert(e.message)}finally{setBusy(false)}
-  }
-
-  async function uploadAsset(){
-    if(!assetFiles.length)return alert('Choose one or more images first.')
-    setBusy(true)
-    try{
-      for(const file of assetFiles){
-        const f=new FormData();f.append('name',assetName);f.append('asset_type',assetType);f.append('file',file)
-        const r=await fetch(`${API}/assets`,{method:'POST',body:f});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Upload failed')
-      }
-      setAssetFiles([]);await refresh()
-    }catch(e:any){alert(e.message)}finally{setBusy(false)}
-  }
-
+  async function uploadGeneric(file:File){const f=new FormData();f.append('file',file);const r=await fetch(`${API}/uploads`,{method:'POST',body:f});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Upload failed');return d.path as string}
+  async function uploadTo(setter:(v:string)=>void,file:File|null){if(!file){setter('');return}try{setter(await uploadGeneric(file))}catch(e:any){alert(e.message)}}
+  async function uploadAsset(){if(!assetFiles.length)return alert('Choose one or more reference images first.');setBusy(true);try{for(const file of assetFiles){const f=new FormData();f.append('name',assetName);f.append('asset_type',assetType);f.append('file',file);const r=await fetch(`${API}/assets`,{method:'POST',body:f});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Upload failed')}setAssetFiles([]);await refresh()}catch(e:any){alert(e.message)}finally{setBusy(false)}}
   async function removeAsset(a:Asset){await fetch(`${API}/assets/${a.id}`,{method:'DELETE'});await refresh()}
 
+  async function plan(){if(!script.trim())return alert('Paste the episode script first.');setBusy(true);try{const payload={title,script,language,aspect,custom_width:aspect==='custom'?customWidth:null,custom_height:aspect==='custom'?customHeight:null,voice,narration_style:narrationStyle,reference_voice_path:referenceVoicePath||null,consistency_lock:lock,generate_images:true,transition,background_music_path:musicPath||null,music_volume:musicVolume,subtitles_enabled:subtitlesEnabled,subtitle_font:subtitleFont,subtitle_size:subtitleSize,subtitle_position:subtitlePosition,subtitle_color:subtitleColor,subtitle_stroke_color:subtitleStrokeColor,subtitle_stroke_width:subtitleStrokeWidth,watermark_path:watermarkPath||null,watermark_position:watermarkPosition,watermark_opacity:watermarkOpacity,watermark_width_percent:watermarkWidth};const r=await fetch(`${API}/projects`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Planning failed');setProject(d)}catch(e:any){alert(e.message)}finally{setBusy(false)}}
+  async function render(){if(!project)return;const r=await fetch(`${API}/projects/${project.id}/render`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({regenerate_all_images:false})});const d=await r.json();if(!r.ok)return alert(d.detail||'Render failed');setProject({...project,state:'rendering',stage:'Starting',progress:1})}
+  async function saveScene(scene:Scene){if(!project)return;const r=await fetch(`${API}/projects/${project.id}/scenes/${scene.scene_number}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({narration:scene.narration,characters:scene.characters,location:scene.location,emotion:scene.emotion,action:scene.action,image_prompt:scene.image_prompt})});const u=await r.json();if(!r.ok)return alert(u.detail||'Save failed');setProject({...project,scenes:project.scenes.map(s=>s.scene_number===u.scene_number?u:s)})}
+  async function regen(scene:Scene){if(!project)return;setBusy(true);try{await saveScene(scene);const r=await fetch(`${API}/projects/${project.id}/scenes/${scene.scene_number}/regenerate`,{method:'POST'});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Generation failed');setProject(p=>p?{...p,scenes:p.scenes.map(s=>s.scene_number===d.scene_number?d:s)}:p)}catch(e:any){alert(e.message)}finally{setBusy(false)}}
+
+  const filteredVoices=voices.filter(v=>language==='pt-BR'?v.culture==='pt-BR':String(v.culture||'').startsWith('en'))
   return <div className="app">
-    <header><div><div className="brand">Bramble Videos</div><div className="tag">Growing good hearts, one story at a time.</div></div><nav><button onClick={()=>setTab('studio')} className={tab==='studio'?'active':''}>Studio</button><button onClick={()=>setTab('assets')} className={tab==='assets'?'active':''}>Character Library</button><button onClick={()=>setTab('system')} className={tab==='system'?'active':''}>System</button></nav></header>
+    <header><div><div className="brand">Bramble Videos</div><div className="tag">Cinematic local AI story production</div></div><nav><button onClick={()=>setTab('studio')} className={tab==='studio'?'active':''}>Studio</button><button onClick={()=>setTab('assets')} className={tab==='assets'?'active':''}>Character Library</button><button onClick={()=>setTab('system')} className={tab==='system'?'active':''}>System</button></nav></header>
 
     {tab==='studio'&&<main>
-      <section className="panel hero"><h1>Scene-by-scene Bramble production</h1><p>Phrase-timed narration, subtitles, character references and images all share the same timeline.</p></section>
-      <section className="grid two"><div className="panel"><label>Episode title<input value={title} onChange={e=>setTitle(e.target.value)}/></label><label>Script<textarea rows={13} value={script} onChange={e=>setScript(e.target.value)} placeholder="Paste the complete episode script here..."/></label><div className="grid three"><label>Language<select value={language} onChange={e=>{setLanguage(e.target.value);setVoice('')}}><option value="en">English</option><option value="pt-BR">Português BR</option></select></label><label>Format<select value={aspect} onChange={e=>setAspect(e.target.value)}><option>16:9</option><option>9:16</option><option>1:1</option><option>4:5</option><option value="custom">Custom</option></select></label><label>Voice<select value={voice} onChange={e=>setVoice(e.target.value)}><option value="">Automatic local voice</option>{voices.filter(v=>language==='pt-BR'?v.culture==='pt-BR':v.culture.startsWith('en')).map(v=><option key={v.name}>{v.name}</option>)}</select></label></div>{aspect==='custom'&&<div className="grid two compact"><label>Width<input type="number" min={256} max={4096} value={customWidth} onChange={e=>setCustomWidth(Number(e.target.value))}/></label><label>Height<input type="number" min={256} max={4096} value={customHeight} onChange={e=>setCustomHeight(Number(e.target.value))}/></label></div>}<label>Optional background music<input type="file" accept="audio/*" onChange={e=>uploadMusic(e.target.files?.[0]||null)}/>{musicPath&&<span className="good small">Music loaded locally</span>}</label><label className="check"><input type="checkbox" checked={lock} onChange={e=>setLock(e.target.checked)}/> Bramble Consistency Lock — require approved reference images for named characters</label><button className="primary" onClick={plan} disabled={busy}>{busy?'Working...':'Plan Episode'}</button></div>
-      <div className="panel"><h2>Reference readiness</h2>{chars.map(c=><div className="assetRow" key={c.id}><b>{c.name}</b><span className={c.image_paths.length?'good':'warn'}>{c.image_paths.length?`${c.image_paths.length} reference image(s)`:'Needs reference'}</span></div>)}<p className="small">When a character is named in a scene, the planner attaches that character profile automatically. With Consistency Lock on, rendering stops before generation if a required reference is missing.</p></div></section>
-      {project&&<><section className="panel status"><div><b>{project.title}</b><span>{project.stage}</span></div><progress value={project.progress} max={100}/><span>{project.progress}%</span>{project.error&&<div className="error">{project.error}</div>}</section><section className="sceneList">{project.scenes.map(s=><SceneCard key={s.scene_number} projectId={project.id} scene={s} assets={assets} onChange={next=>setProject({...project,scenes:project.scenes.map(x=>x.scene_number===next.scene_number?next:x)})} onSave={()=>saveScene(s)} onRegen={()=>regen(s)}/>)}</section><section className="panel renderBar"><button className="primary" onClick={render} disabled={project.state==='rendering'}>{project.state==='rendering'?'Rendering...':'Render Full Video'}</button>{project.state==='complete'&&<><span className="good">Complete · {project.video_encoder}</span><a className="download" href={`${API}/projects/${project.id}/subtitles`}>Download SRT</a><video controls src={`${API}/projects/${project.id}/video`}/></>}</section></>}
+      <section className="panel hero"><h1>Scene-by-scene Bramble production</h1><p>Voice, emotion, phrase subtitles, character references, cinematic images, watermark and music all render from one timeline.</p></section>
+      <section className="grid twoWide">
+        <div className="panel">
+          <h2>Episode</h2><label>Episode title<input value={title} onChange={e=>setTitle(e.target.value)}/></label><label>Script<textarea rows={11} value={script} onChange={e=>setScript(e.target.value)} placeholder="Paste the complete episode script here..."/></label>
+          <div className="grid three"><label>Language<select value={language} onChange={e=>{setLanguage(e.target.value);setVoice('')}}><option value="en">English</option><option value="pt-BR">Português Brasileiro</option></select></label><label>Video format<select value={aspect} onChange={e=>setAspect(e.target.value)}><option>16:9</option><option>9:16</option><option>1:1</option><option>4:5</option><option value="custom">Custom</option></select></label><label>Transition<select value={transition} onChange={e=>setTransition(e.target.value)}><option>Gentle Fade</option><option>Cut</option><option>Subtle Zoom</option></select></label></div>
+          {aspect==='custom'&&<div className="grid two"><label>Width<input type="number" value={customWidth} onChange={e=>setCustomWidth(+e.target.value)}/></label><label>Height<input type="number" value={customHeight} onChange={e=>setCustomHeight(+e.target.value)}/></label></div>}
+
+          <div className="sectionBlock"><h3>Narration & Voice</h3><div className="grid three"><label>Voice<select value={voice} onChange={e=>setVoice(e.target.value)}><option value="">Automatic local voice</option><option value="__chatterbox__">Expressive Chatterbox AI</option>{filteredVoices.map(v=><option value={v.name} key={v.name}>{v.name} {v.gender?`(${v.gender})`:''}</option>)}</select></label><label>Voice style<select value={narrationStyle} onChange={e=>setNarrationStyle(e.target.value)}>{styles.map(s=><option key={s}>{s}</option>)}</select></label><label>Upload voice reference<input type="file" accept="audio/*" onChange={e=>uploadTo(setReferenceVoicePath,e.target.files?.[0]||null)}/>{referenceVoicePath&&<span className="good small">Reference voice loaded</span>}</label></div><p className="small">Upload a clean voice sample if you want Chatterbox to imitate that voice style. Dramatic, Emotional, Warm, Calm, Documentary, Inspirational and Sermon profiles are available.</p></div>
+
+          <div className="sectionBlock"><h3>Subtitles</h3><label className="check"><input type="checkbox" checked={subtitlesEnabled} onChange={e=>setSubtitlesEnabled(e.target.checked)}/> Burn phrase-timed subtitles into final video</label>{subtitlesEnabled&&<><div className="grid four"><label>Font<input value={subtitleFont} onChange={e=>setSubtitleFont(e.target.value)}/></label><label>Size<input type="number" min={8} max={96} value={subtitleSize} onChange={e=>setSubtitleSize(+e.target.value)}/></label><label>Position<select value={subtitlePosition} onChange={e=>setSubtitlePosition(e.target.value)}><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label><label>Outline<input type="number" min={0} max={10} value={subtitleStrokeWidth} onChange={e=>setSubtitleStrokeWidth(+e.target.value)}/></label></div><div className="grid two"><label>Text color<input type="color" value={subtitleColor} onChange={e=>setSubtitleColor(e.target.value.toUpperCase())}/></label><label>Outline color<input type="color" value={subtitleStrokeColor} onChange={e=>setSubtitleStrokeColor(e.target.value.toUpperCase())}/></label></div></>}</div>
+
+          <div className="sectionBlock"><h3>Music & Watermark</h3><div className="grid two"><label>Background music<input type="file" accept="audio/*" onChange={e=>uploadTo(setMusicPath,e.target.files?.[0]||null)}/>{musicPath&&<span className="good small">Music loaded</span>}</label><label>Music volume <b>{Math.round(musicVolume*100)}%</b><input type="range" min="0" max="0.5" step="0.01" value={musicVolume} onChange={e=>setMusicVolume(+e.target.value)}/></label></div><div className="grid four"><label>Watermark image<input type="file" accept="image/*" onChange={e=>uploadTo(setWatermarkPath,e.target.files?.[0]||null)}/>{watermarkPath&&<span className="good small">Watermark loaded</span>}</label><label>Position<select value={watermarkPosition} onChange={e=>setWatermarkPosition(e.target.value)}><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label><label>Opacity {Math.round(watermarkOpacity*100)}%<input type="range" min="0.05" max="1" step="0.05" value={watermarkOpacity} onChange={e=>setWatermarkOpacity(+e.target.value)}/></label><label>Width {watermarkWidth}%<input type="range" min="4" max="40" value={watermarkWidth} onChange={e=>setWatermarkWidth(+e.target.value)}/></label></div></div>
+
+          <label className="check"><input type="checkbox" checked={lock} onChange={e=>setLock(e.target.checked)}/> Bramble Consistency Lock — require approved character references</label><div className="qualityBadge">Cinematic high-resolution image generation · script-matched scene prompts · character identity references</div><button className="primary big" onClick={plan} disabled={busy}>{busy?'Working...':'Plan Episode'}</button>
+        </div>
+
+        <div className="stack"><div className="panel"><div className="splitTitle"><h2>Character References</h2><button onClick={()=>setTab('assets')}>Open Library</button></div>{chars.map(c=><div className="assetRow" key={c.id}><b>{c.name}</b><span className={c.image_paths.length?'good':'warn'}>{c.image_paths.length?`${c.image_paths.length} reference(s)`:'Needs reference'}</span></div>)}<hr/><h3>Quick upload</h3><label>Character<select value={assetName} onChange={e=>setAssetName(e.target.value)}>{['Bramble','Grace','Pip','Oliver','Barnaby'].map(x=><option key={x}>{x}</option>)}</select></label><label>Reference images<input type="file" multiple accept="image/*" onChange={e=>{setAssetType('character');setAssetFiles(Array.from(e.currentTarget.files||[]))}}/></label><button className="primary" onClick={uploadAsset} disabled={busy||!assetFiles.length}>Upload References</button></div><div className="panel"><h2>Current local engines</h2><div className="miniStats"><Stat name="Chatterbox" value={health.chatterbox?'Ready':'Offline'} ok={!!health.chatterbox}/><Stat name="ComfyUI" value={health.comfyui?'Ready':'Offline'} ok={!!health.comfyui}/><Stat name="Ollama" value={health.ollama?'Ready':'Offline'} ok={!!health.ollama}/></div></div></div>
+      </section>
+
+      {project&&<><section className="panel status"><div><b>{project.title}</b><span>{project.stage}</span></div><progress value={project.progress} max={100}/><span>{project.progress}%</span>{project.error&&<div className="error">{project.error}</div>}</section><section className="sceneList">{project.scenes.map(s=><SceneCard key={s.scene_number} projectId={project.id} scene={s} assets={assets} onChange={next=>setProject({...project,scenes:project.scenes.map(x=>x.scene_number===next.scene_number?next:x)})} onSave={()=>saveScene(s)} onRegen={()=>regen(s)}/>)}</section><section className="panel renderBar"><button className="primary big" onClick={render} disabled={project.state==='rendering'}>{project.state==='rendering'?'Rendering...':'Render Full Video'}</button>{project.state==='complete'&&<><span className="good">Complete · {project.video_encoder}</span><a className="download" href={`${API}/projects/${project.id}/subtitles`}>Download SRT</a><video controls src={`${API}/projects/${project.id}/video`}/></>}</section></>}
     </main>}
 
-    {tab==='assets'&&<main><section className="grid two"><div className="panel"><h1>Upload approved references</h1><label>Name<input value={assetName} onChange={e=>setAssetName(e.target.value)}/></label><label>Type<select value={assetType} onChange={e=>setAssetType(e.target.value)}><option value="character">Character</option><option value="location">Location</option><option value="prop">Prop</option><option value="group">Group</option></select></label><label>Reference images<input type="file" multiple accept="image/*" onChange={e=>setAssetFiles(Array.from(e.currentTarget.files||[]))}/><span className="small">Select several front/back/face/expression sheets at once for the same character.</span></label><button className="primary" disabled={busy} onClick={uploadAsset}>{busy?'Uploading...':`Add ${assetFiles.length||''} Reference Image${assetFiles.length===1?'':'s'}`}</button><p className="small">Upload Bramble, Grace, Pip, Oliver and Barnaby under their matching names. The scene planner then recognizes those names in your script and automatically attaches the approved references.</p></div><div className="panel"><h2>Asset library</h2>{assets.map(a=><div className="library" key={a.id}><div><b>{a.name}</b><div className="small">{a.type} · {a.image_paths.length} image(s)</div><div className="small">{a.traits}</div></div><button onClick={()=>removeAsset(a)}>Clear</button></div>)}</div></section></main>}
+    {tab==='assets'&&<main><section className="grid two"><div className="panel"><h1>Character & Scene Reference Library</h1><label>Name<input value={assetName} onChange={e=>setAssetName(e.target.value)}/></label><label>Type<select value={assetType} onChange={e=>setAssetType(e.target.value)}><option value="character">Character</option><option value="location">Location</option><option value="prop">Prop</option><option value="group">Group</option></select></label><label>Reference images<input type="file" multiple accept="image/*" onChange={e=>setAssetFiles(Array.from(e.currentTarget.files||[]))}/><span className="small">Upload face, front, back, side and expression sheets. Multiple images can be saved for one character.</span></label><button className="primary" disabled={busy||!assetFiles.length} onClick={uploadAsset}>Upload {assetFiles.length||''} Reference Image{assetFiles.length===1?'':'s'}</button></div><div className="panel"><h2>Saved references</h2>{assets.map(a=><div className="library" key={a.id}><div><b>{a.name}</b><div className="small">{a.type} · {a.image_paths.length} image(s)</div></div><button onClick={()=>removeAsset(a)}>Clear</button></div>)}</div></section></main>}
 
-    {tab==='system'&&<main><section className="panel"><h1>Local system</h1><div className="systemGrid"><Stat name="Backend" value="Ready" ok/><Stat name="ComfyUI" value={health.comfyui?'Ready':'Offline'} ok={!!health.comfyui}/><Stat name="Ollama" value={health.ollama?'Ready':'Offline'} ok={!!health.ollama}/><Stat name="Video Encoder" value={health.ffmpeg_encoder||'Unknown'} ok={health.ffmpeg_encoder==='h264_amf'}/><Stat name="Ollama VRAM" value={health.ollama_gpu_vram_bytes?`${(health.ollama_gpu_vram_bytes/1024/1024/1024).toFixed(1)} GB`:'Model not loaded'} ok={health.ollama_gpu_vram_bytes>0}/></div><p className="small">For GPU video rendering you want Video Encoder to show h264_amf. ComfyUI keeps using your existing working local GPU configuration.</p><button onClick={refresh}>Refresh</button></section></main>}
+    {tab==='system'&&<main><section className="panel"><h1>Local system</h1><div className="systemGrid"><Stat name="Backend" value="Ready" ok/><Stat name="ComfyUI" value={health.comfyui?'Ready':'Offline'} ok={!!health.comfyui}/><Stat name="Ollama" value={health.ollama?'Ready':'Offline'} ok={!!health.ollama}/><Stat name="Chatterbox" value={health.chatterbox?'Ready':'Offline'} ok={!!health.chatterbox}/><Stat name="Video Encoder" value={health.ffmpeg_encoder||'Unknown'} ok={health.ffmpeg_encoder==='h264_amf'}/></div><button onClick={refresh}>Refresh</button></section></main>}
   </div>
 }
 
-function SceneCard({projectId,scene,assets,onChange,onSave,onRegen}:{projectId:string,scene:Scene,assets:Asset[],onChange:(s:Scene)=>void,onSave:()=>void,onRegen:()=>void}){
-  const chars=assets.filter(a=>a.type==='character')
-  return <article className="panel scene"><div className="sceneTop"><h3>Scene {scene.scene_number}</h3><span>{scene.duration_seconds?`${scene.duration_seconds.toFixed(1)}s`:'timed during render'}</span></div>{scene.image_path&&<img className="scenePreview" src={`${API}/projects/${projectId}/scenes/${scene.scene_number}/image?v=${encodeURIComponent(scene.image_path)}`} alt={`Scene ${scene.scene_number}`}/>}<label>Narration<textarea rows={3} value={scene.narration} onChange={e=>onChange({...scene,narration:e.target.value})}/></label><div className="grid three"><label>Characters<select multiple value={scene.characters} onChange={e=>onChange({...scene,characters:Array.from(e.currentTarget.selectedOptions).map((o:HTMLOptionElement)=>o.value)})}>{chars.map(c=><option key={c.name}>{c.name}</option>)}</select></label><label>Location<input value={scene.location} onChange={e=>onChange({...scene,location:e.target.value})}/></label><label>Emotion<input value={scene.emotion} onChange={e=>onChange({...scene,emotion:e.target.value})}/></label></div><label>Image prompt<textarea rows={4} value={scene.image_prompt} onChange={e=>onChange({...scene,image_prompt:e.target.value})}/></label><div className="actions"><button onClick={onSave}>Save Scene</button><button onClick={onRegen}>Regenerate Image</button></div></article>
-}
+function SceneCard({projectId,scene,assets,onChange,onSave,onRegen}:{projectId:string,scene:Scene,assets:Asset[],onChange:(s:Scene)=>void,onSave:()=>void,onRegen:()=>void}){const chars=assets.filter(a=>a.type==='character');return <article className="panel scene"><div className="sceneTop"><h3>Scene {scene.scene_number}</h3><span>{scene.duration_seconds?`${scene.duration_seconds.toFixed(1)}s`:'timed during render'}</span></div>{scene.image_path&&<img className="scenePreview" src={`${API}/projects/${projectId}/scenes/${scene.scene_number}/image?v=${encodeURIComponent(scene.image_path)}`} alt={`Scene ${scene.scene_number}`}/>}<label>Narration<textarea rows={3} value={scene.narration} onChange={e=>onChange({...scene,narration:e.target.value})}/></label><div className="grid three"><label>Characters<select multiple value={scene.characters} onChange={e=>onChange({...scene,characters:Array.from(e.currentTarget.selectedOptions).map((o:HTMLOptionElement)=>o.value)})}>{chars.map(c=><option key={c.name}>{c.name}</option>)}</select></label><label>Location<input value={scene.location} onChange={e=>onChange({...scene,location:e.target.value})}/></label><label>Emotion<input value={scene.emotion} onChange={e=>onChange({...scene,emotion:e.target.value})}/></label></div><label>Cinematic image prompt<textarea rows={4} value={scene.image_prompt} onChange={e=>onChange({...scene,image_prompt:e.target.value})}/></label><div className="actions"><button onClick={onSave}>Save Scene</button><button onClick={onRegen}>Regenerate Cinematic Image</button></div></article>}
 function Stat({name,value,ok}:{name:string,value:string,ok:boolean}){return <div className="stat"><span>{name}</span><b className={ok?'good':'warn'}>{value}</b></div>}
