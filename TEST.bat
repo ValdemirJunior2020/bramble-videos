@@ -2,29 +2,39 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 title Bramble Videos - Tests
+set "QUIET=0"
+if /i "%~1"=="/quiet" set "QUIET=1"
 
 if not exist "backend\.venv\Scripts\python.exe" (
   echo [ERROR] Run INSTALL.bat first.
-  pause
+  if "%QUIET%"=="0" pause
   exit /b 1
 )
 
 call backend\.venv\Scripts\activate.bat
-python -m compileall -q backend\app || goto :fail
-python -m pytest -q backend\tests || goto :fail
+python -m compileall -q backend\app
+if errorlevel 1 goto :fail_active
+python -m pytest -q backend\tests
+if errorlevel 1 goto :fail_active
 deactivate
 
 pushd frontend
-call npm run build || (popd & goto :fail)
+call npm run build
+if errorlevel 1 (
+  popd
+  goto :fail
+)
 popd
 
 echo.
 echo ALL BRAMBLE TESTS PASSED.
-pause
+if "%QUIET%"=="0" pause
 exit /b 0
 
+:fail_active
+deactivate
 :fail
 echo.
 echo TEST FAILED. See the error above.
-pause
+if "%QUIET%"=="0" pause
 exit /b 1
