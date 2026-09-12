@@ -10,6 +10,26 @@ import httpx
 from .config import settings
 from .models import VoiceInfo
 
+EMOTION_PROFILES: dict[str, dict[str, float]] = {
+    "calm": {"exaggeration": 0.45, "cfg_weight": 0.35, "temperature": 0.70},
+    "documentary": {"exaggeration": 0.55, "cfg_weight": 0.35, "temperature": 0.72},
+    "warm": {"exaggeration": 0.65, "cfg_weight": 0.32, "temperature": 0.76},
+    "inspirational": {"exaggeration": 0.78, "cfg_weight": 0.30, "temperature": 0.82},
+    "emotional": {"exaggeration": 0.90, "cfg_weight": 0.28, "temperature": 0.86},
+    "dramatic": {"exaggeration": 1.00, "cfg_weight": 0.25, "temperature": 0.90},
+    "sermon": {"exaggeration": 0.88, "cfg_weight": 0.25, "temperature": 0.82},
+}
+
+STYLE_RATE = {
+    "calm": -2,
+    "documentary": -1,
+    "warm": -1,
+    "inspirational": 0,
+    "emotional": -1,
+    "dramatic": 0,
+    "sermon": -2,
+}
+
 
 def _ps_escape(value: str) -> str:
     return value.replace("'", "''")
@@ -56,18 +76,44 @@ async def _chatterbox_available() -> bool:
     except Exception:
         return False
 
-async def _sapi(text: str, language: str, voice: str, output: Path) -> None:
+async def _sapi(text: str, language: str, voice: str, style: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     target = _ps_escape(str(output.resolve()))
     txt = _ps_escape(text)
-    requested = _ps_escape(voice)
+    requested = _ps_escape(voice if voice != "__chatterbox__" else "")
     culture = "pt-BR" if language == "pt-BR" else "en-US"
-    script = f"Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices=$s.GetInstalledVoices() | ForEach-Object {{$_.VoiceInfo}}; $v=$null; if ('{requested}' -ne '') {{$v=$voices | Where-Object {{$_.Name -eq '{requested}'}} | Select-Object -First 1}}; if ($null -eq $v) {{$v=$voices | Where-Object {{$_.Culture.Name -eq '{culture}'}} | Select-Object -First 1}}; if ($null -eq $v) {{ throw 'No installed Windows voice matches {culture}. Choose or install a local voice for this language.' }}; $s.SelectVoice($v.Name); $s.Rate=-1; $s.SetOutputToWaveFile('{target}'); $s.Speak('{txt}'); $s.Dispose()"
+    rate = STYLE_RATE.get((style or "warm").strip().lower(), -1)
+    script = f"Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices=$s.GetInstalledVoices() | ForEach-Object {{$_.VoiceInfo}}; $v=$null; if ('{requested}' -ne '') {{$v=$voices | Where-Object {{$_.Name -eq '{requested}'}} | Select-Object -First 1}}; if ($null -eq $v) {{$v=$voices | Where-Object {{$_.Culture.Name -eq '{culture}'}} | Select-Object -First 1}}; if ($null -eq $v) {{ throw 'No installed Windows voice matches {culture}. Choose or install a local voice for this language.' }}; $s.SelectVoice($v.Name); $s.Rate={rate}; $s.SetOutputToWaveFile('{target}'); $s.Speak('{txt}'); $s.Dispose()"
     await _run(["powershell", "-NoProfile", "-Command", script])
 
-async def _chatterbox(text: str, style: str, output: Path) -> None:
+async def _chatterbox(text: str, style: str, output: Path, reference_voice: Path | None = None) -> None:
+    profile = EMOTION_PROFILES.get((style or "warm").strip().lower(), EMOTION_PROFILES["warm"])
+    base = settings.chatterbox_url.rstrip("/")
     async with httpx.AsyncClient(timeout=None) as client:
-        response = await client.post(f"{settings.chatterbox_url.rstrip('/')}/synthesize", json={"text": text, "style": style})
+        if reference_voice and reference_voice.exists():
+            with reference_voice.open("rb") as handle:
+                response = await client.post(
+                    f"{base}/synthesize-upload",
+                    data={
+                        "text": text,
+                        "style": style,
+                        "exaggeration": str(profile["exaggeration"]),
+                        "cfg_weight": str(profile["cfg_weight"]),
+                        "temperature": str(profile["temperature"]),
+                    },
+                    files={"reference": (reference_voice.name, handle, "audio/wav")},
+                )
+        else:
+            response = await client.post(
+                f"{base}/synthesize",
+                json={
+                    "text": text,
+                    "style": style,
+                    "exaggeration": profile["exaggeration"],
+                    "cfg_weight": profile["cfg_weight"],
+                    "temperature": profile["temperature"],
+                },
+            )
         response.raise_for_status()
         output.write_bytes(response.content)
 
@@ -77,12 +123,17 @@ async def normalize_wav(source: Path, target: Path, speed: float = 1.0) -> None:
         filters = ["-filter:a", f"atempo={speed:.4f}"]
     await _run(["ffmpeg", "-y", "-i", str(source), *filters, "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(target)])
 
-async def synthesize_phrase(text: str, language: str, voice: str, style: str, output: Path) -> None:
+async def synthesize_phrase(text: str, language: str, voice: str, style: str, output: Path, reference_voice_path: str | None = None) -> None:
     raw = output.with_name(output.stem + "-raw.wav")
-    if language == "en" and await _chatterbox_available():
-        await _chatterbox(text, style, raw)
+    reference = Path(reference_voice_path) if reference_voice_path else None
+    use_chatterbox = voice == "__chatterbox__" or bool(reference) or (language == "en" and not voice)
+    if use_chatterbox and await _chatterbox_available():
+        try:
+            await _chatterbox(text, style, raw, reference)
+        except Exception:
+            await _sapi(text, language, voice, style, raw)
     else:
-        await _sapi(text, language, voice, raw)
+        await _sapi(text, language, voice, style, raw)
     await normalize_wav(raw, output, settings.narration_speed)
     raw.unlink(missing_ok=True)
 
@@ -100,7 +151,7 @@ def _srt_time(seconds: float) -> str:
     s, milli = divmod(rem, 1000)
     return f"{h:02}:{m:02}:{s:02},{milli:03}"
 
-async def build_narration_and_subtitles(scenes, language: str, voice: str, style: str, workdir: Path):
+async def build_narration_and_subtitles(scenes, language: str, voice: str, style: str, workdir: Path, reference_voice_path: str | None = None):
     audio_dir = workdir / "audio_parts"
     audio_dir.mkdir(parents=True, exist_ok=True)
     silence = audio_dir / "silence.wav"
@@ -114,7 +165,7 @@ async def build_narration_and_subtitles(scenes, language: str, voice: str, style
         for phrase in split_phrases(scene.narration):
             index += 1
             part = audio_dir / f"phrase-{index:04d}.wav"
-            await synthesize_phrase(phrase, language, voice, style, part)
+            await synthesize_phrase(phrase, language, voice, style, part, reference_voice_path)
             seconds = await duration(part)
             subtitle_entries.append({"index": index, "scene_number": scene.scene_number, "text": phrase, "start": cursor, "end": cursor + seconds})
             concat_entries.append(part)
