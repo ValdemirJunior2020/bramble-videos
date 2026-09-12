@@ -14,11 +14,11 @@ from .models import Project, Scene
 
 
 def dimensions(project: Project) -> tuple[int, int]:
-    if project.aspect == "16:9": return (1280, 720)
-    if project.aspect == "9:16": return (720, 1280)
-    if project.aspect == "1:1": return (1024, 1024)
-    if project.aspect == "4:5": return (1080, 1350)
-    return (project.custom_width or 1280, project.custom_height or 720)
+    if project.aspect == "16:9": return (1920, 1080)
+    if project.aspect == "9:16": return (1080, 1920)
+    if project.aspect == "1:1": return (1536, 1536)
+    if project.aspect == "4:5": return (1440, 1800)
+    return (project.custom_width or 1920, project.custom_height or 1080)
 
 async def health() -> bool:
     try:
@@ -96,17 +96,17 @@ def _base_nodes(checkpoint: str, prompt: str, negative: str) -> dict:
 
 def _text_workflow(checkpoint: str, prompt: str, negative: str, width: int, height: int, seed: int) -> dict:
     wf = _base_nodes(checkpoint, prompt, negative)
-    wf.update({"5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}, "3": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 28, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0, "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}}, "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}}, "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}}})
+    wf.update({"5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}, "3": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 32, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0, "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}}, "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}}, "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}}})
     return wf
 
 def _img2img_workflow(checkpoint: str, prompt: str, negative: str, width: int, height: int, seed: int, reference_name: str, denoise: float) -> dict:
     wf = _base_nodes(checkpoint, prompt, negative)
-    wf.update({"10": {"class_type": "LoadImage", "inputs": {"image": reference_name}}, "11": {"class_type": "ImageScale", "inputs": {"upscale_method": "lanczos", "width": width, "height": height, "crop": "center", "image": ["10", 0]}}, "12": {"class_type": "VAEEncode", "inputs": {"pixels": ["11", 0], "vae": ["4", 2]}}, "3": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 30, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": denoise, "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["12", 0]}}, "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}}, "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}}})
+    wf.update({"10": {"class_type": "LoadImage", "inputs": {"image": reference_name}}, "11": {"class_type": "ImageScale", "inputs": {"upscale_method": "lanczos", "width": width, "height": height, "crop": "center", "image": ["10", 0]}}, "12": {"class_type": "VAEEncode", "inputs": {"pixels": ["11", 0], "vae": ["4", 2]}}, "3": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 32, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": denoise, "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["12", 0]}}, "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}}, "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}}})
     return wf
 
 def _ipadapter_workflow(checkpoint: str, prompt: str, negative: str, width: int, height: int, seed: int, reference_name: str, adapter_file: str, clip_name: str) -> dict:
     wf = _base_nodes(checkpoint, prompt, negative)
-    wf.update({"5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}, "10": {"class_type": "LoadImage", "inputs": {"image": reference_name}}, "11": {"class_type": "IPAdapterModelLoader", "inputs": {"ipadapter_file": adapter_file}}, "12": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": clip_name}}, "13": {"class_type": "IPAdapterAdvanced", "inputs": {"weight": 0.82, "weight_type": "linear", "combine_embeds": "concat", "start_at": 0.0, "end_at": 1.0, "embeds_scaling": "V only", "model": ["4", 0], "ipadapter": ["11", 0], "image": ["10", 0], "clip_vision": ["12", 0]}}, "3": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 30, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0, "model": ["13", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}}, "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}}, "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}}})
+    wf.update({"5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}, "10": {"class_type": "LoadImage", "inputs": {"image": reference_name}}, "11": {"class_type": "IPAdapterModelLoader", "inputs": {"ipadapter_file": adapter_file}}, "12": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": clip_name}}, "13": {"class_type": "IPAdapterAdvanced", "inputs": {"weight": 0.82, "weight_type": "linear", "combine_embeds": "concat", "start_at": 0.0, "end_at": 1.0, "embeds_scaling": "V only", "model": ["4", 0], "ipadapter": ["11", 0], "image": ["10", 0], "clip_vision": ["12", 0]}}, "3": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 32, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0, "model": ["13", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}}, "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}}, "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}}})
     return wf
 
 async def _queue(workflow: dict, client_id: str) -> str:
