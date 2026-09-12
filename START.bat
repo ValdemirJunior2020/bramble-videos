@@ -31,28 +31,37 @@ if exist ".env" (
 
 netstat -ano | findstr ":11434 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  where ollama >nul 2>nul && start "Bramble Ollama" /min cmd /c "ollama serve"
-) else echo [OK] Ollama already running
+  where ollama >nul 2>nul
+  if not errorlevel 1 start "Bramble Ollama" /min cmd /c "ollama serve"
+) else (
+  echo [OK] Ollama already running
+)
 
 netstat -ano | findstr ":8188 " | findstr "LISTENING" >nul
 if errorlevel 1 (
   if exist "%COMFYUI_PATH%\.venv\Scripts\python.exe" (
-    echo Starting ComfyUI from %COMFYUI_PATH%
-    start "Bramble ComfyUI" cmd /k "pushd ""%COMFYUI_PATH%"" && .\.venv\Scripts\python.exe main.py --listen 127.0.0.1 --port 8188"
+    echo Starting your existing ComfyUI environment from %COMFYUI_PATH%
+    start "Bramble ComfyUI" /D "%COMFYUI_PATH%" cmd /k ".\.venv\Scripts\python.exe main.py --listen 127.0.0.1 --port 8188"
   ) else (
-    echo [WARN] ComfyUI not found at %COMFYUI_PATH%
+    echo [WARN] ComfyUI is not running and was not found at %COMFYUI_PATH%
   )
-) else echo [OK] ComfyUI already running
+) else (
+  echo [OK] Your existing ComfyUI is already running - leaving it untouched
+)
 
 netstat -ano | findstr ":8000 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Backend" cmd /k "pushd ""%~dp0backend"" && .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
-) else echo [OK] Backend already running
+  start "Bramble Backend" /D "%~dp0backend" cmd /k ".\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+) else (
+  echo [OK] Backend already running
+)
 
 netstat -ano | findstr ":5173 " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Frontend" cmd /k "pushd ""%~dp0frontend"" && npm run dev -- --host 127.0.0.1 --port 5173"
-) else echo [OK] Frontend already running
+  start "Bramble Frontend" /D "%~dp0frontend" cmd /k "npm run dev -- --host 127.0.0.1 --port 5173"
+) else (
+  echo [OK] Frontend already running
+)
 
 timeout /t 5 /nobreak >nul
 start "" http://127.0.0.1:5173
