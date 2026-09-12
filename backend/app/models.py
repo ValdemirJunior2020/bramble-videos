@@ -20,7 +20,19 @@ class Asset(BaseModel):
     traits: str = ""
     image_paths: list[str] = Field(default_factory=list)
     approved: bool = True
+    voice: str = ""
+    voice_style: NarrationStyle = "Warm"
+    voice_reference_path: str | None = None
+    voice_speed: float = Field(default=1.0, ge=0.70, le=1.30)
+    voice_volume: float = Field(default=1.0, ge=0.20, le=2.00)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+class AssetVoiceUpdate(BaseModel):
+    voice: str = ""
+    voice_style: NarrationStyle = "Warm"
+    voice_reference_path: str | None = None
+    voice_speed: float = Field(default=1.0, ge=0.70, le=1.30)
+    voice_volume: float = Field(default=1.0, ge=0.20, le=2.00)
 
 class Scene(BaseModel):
     scene_number: int = Field(ge=1)
