@@ -11,28 +11,29 @@ if not exist "backend\.venv\Scripts\python.exe" (
   exit /b 1
 )
 
-call backend\.venv\Scripts\activate.bat
-python -m compileall -q backend\app
-if errorlevel 1 goto :fail_active
-python -m pytest -q backend\tests
-if errorlevel 1 goto :fail_active
-deactivate
+echo [TEST] Compiling backend...
+"backend\.venv\Scripts\python.exe" -m compileall -q "backend\app"
+if errorlevel 1 goto :fail
 
-pushd frontend
-call npm run build
-if errorlevel 1 (
-  popd
-  goto :fail
-)
+echo [TEST] Running backend tests from backend folder...
+pushd "backend"
+".venv\Scripts\python.exe" -m pytest -q "tests"
+set "PYTEST_RESULT=%ERRORLEVEL%"
 popd
+if not "%PYTEST_RESULT%"=="0" goto :fail
+
+echo [TEST] Building frontend...
+pushd "frontend"
+call npm run build
+set "NPM_RESULT=%ERRORLEVEL%"
+popd
+if not "%NPM_RESULT%"=="0" goto :fail
 
 echo.
 echo ALL BRAMBLE TESTS PASSED.
 if "%QUIET%"=="0" pause
 exit /b 0
 
-:fail_active
-deactivate
 :fail
 echo.
 echo TEST FAILED. See the error above.
