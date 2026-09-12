@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field, field_validator
 AssetType = Literal["character", "location", "prop", "group"]
 Language = Literal["en", "pt-BR"]
 Aspect = Literal["16:9", "9:16", "1:1", "4:5", "custom"]
+NarrationStyle = Literal["Calm", "Documentary", "Warm", "Inspirational", "Emotional", "Dramatic", "Sermon"]
+SubtitlePosition = Literal["top", "middle", "bottom"]
+WatermarkPosition = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
 
 class Asset(BaseModel):
     id: str
@@ -41,18 +44,39 @@ class ProjectCreate(BaseModel):
     custom_width: int | None = Field(default=None, ge=256, le=4096)
     custom_height: int | None = Field(default=None, ge=256, le=4096)
     voice: str = ""
-    narration_style: str = "Warm"
+    narration_style: NarrationStyle = "Warm"
+    reference_voice_path: str | None = None
     consistency_lock: bool = True
     generate_images: bool = True
     reference_denoise: float | None = Field(default=None, ge=0.15, le=0.95)
     transition: Literal["Gentle Fade", "Cut", "Subtle Zoom"] = "Gentle Fade"
     background_music_path: str | None = None
     music_volume: float = Field(default=0.08, ge=0.0, le=0.5)
+    subtitles_enabled: bool = True
+    subtitle_font: str = "Arial"
+    subtitle_size: int = Field(default=22, ge=8, le=96)
+    subtitle_position: SubtitlePosition = "bottom"
+    subtitle_color: str = "#FFFFFF"
+    subtitle_stroke_color: str = "#000000"
+    subtitle_stroke_width: int = Field(default=3, ge=0, le=10)
+    watermark_path: str | None = None
+    watermark_position: WatermarkPosition = "bottom-right"
+    watermark_opacity: float = Field(default=0.75, ge=0.05, le=1.0)
+    watermark_width_percent: int = Field(default=14, ge=4, le=40)
 
     @field_validator("script")
     @classmethod
     def normalize_script(cls, value: str) -> str:
         return value.replace("\r\n", "\n").strip()
+
+    @field_validator("subtitle_color", "subtitle_stroke_color")
+    @classmethod
+    def validate_hex_color(cls, value: str) -> str:
+        value = value.strip().upper()
+        if len(value) != 7 or not value.startswith("#"):
+            raise ValueError("Colors must use #RRGGBB")
+        int(value[1:], 16)
+        return value
 
 class Project(BaseModel):
     id: str
@@ -63,13 +87,25 @@ class Project(BaseModel):
     custom_width: int | None = None
     custom_height: int | None = None
     voice: str = ""
-    narration_style: str = "Warm"
+    narration_style: NarrationStyle = "Warm"
+    reference_voice_path: str | None = None
     consistency_lock: bool = True
     generate_images: bool = True
     reference_denoise: float | None = None
     transition: str = "Gentle Fade"
     background_music_path: str | None = None
     music_volume: float = 0.08
+    subtitles_enabled: bool = True
+    subtitle_font: str = "Arial"
+    subtitle_size: int = 22
+    subtitle_position: SubtitlePosition = "bottom"
+    subtitle_color: str = "#FFFFFF"
+    subtitle_stroke_color: str = "#000000"
+    subtitle_stroke_width: int = 3
+    watermark_path: str | None = None
+    watermark_position: WatermarkPosition = "bottom-right"
+    watermark_opacity: float = 0.75
+    watermark_width_percent: int = 14
     scenes: list[Scene] = Field(default_factory=list)
     state: Literal["planned", "rendering", "complete", "failed"] = "planned"
     progress: int = 0
