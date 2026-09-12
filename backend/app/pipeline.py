@@ -46,11 +46,11 @@ async def render_project(project_id: str, regenerate_all_images: bool = False) -
             if missing:
                 raise RuntimeError("Consistency Lock is ON. Upload approved reference images for: " + ", ".join(missing))
         project.stage = "Creating phrase-timed narration"; project.progress = 8; save_project(project)
-        narration, subtitles, _ = await build_narration_and_subtitles(project.scenes, project.language, project.voice, project.narration_style, folder)
+        narration, subtitles, _ = await build_narration_and_subtitles(project.scenes, project.language, project.voice, project.narration_style, folder, project.reference_voice_path)
         project.narration_path = str(narration); project.subtitle_path = str(subtitles); save_project(project)
         images_dir = folder / "images"; images_dir.mkdir(exist_ok=True)
         for i, scene in enumerate(project.scenes, 1):
-            project.stage = f"Generating scene {i} of {len(project.scenes)}"; project.progress = 15 + round(48 * i / max(1, len(project.scenes))); save_project(project)
+            project.stage = f"Generating cinematic scene {i} of {len(project.scenes)}"; project.progress = 15 + round(48 * i / max(1, len(project.scenes))); save_project(project)
             out = images_dir / f"scene-{scene.scene_number:03d}.png"
             if project.generate_images and (regenerate_all_images or not out.exists()):
                 await generate_scene_image(project, scene, out)
@@ -73,7 +73,7 @@ async def render_project(project_id: str, regenerate_all_images: bool = False) -
             await make_scene_clip(Path(scene.image_path), scene.duration_seconds, project, clip, i, encoder)
             clips.append(clip); project.progress = 68 + round(12 * (i + 1) / max(1, len(project.scenes))); save_project(project)
         visuals = folder / "visuals.mp4"; await concat_clips(clips, visuals, encoder)
-        project.stage = "Burning phrase subtitles and final audio"; project.progress = 88; save_project(project)
+        project.stage = "Burning phrase subtitles, watermark and final audio"; project.progress = 88; save_project(project)
         final = folder / "final.mp4"; project.video_encoder = await render_final(visuals, narration, subtitles, final, project, encoder)
         project.output_path = str(final); project.state = "complete"; project.stage = "Complete"; project.progress = 100; save_project(project)
     except Exception as exc:
