@@ -18,7 +18,7 @@ from .pipeline import load_project, project_dir, save_project, start_render
 from .planner import plan_scenes, build_prompt
 from .video import detect_encoder
 
-app = FastAPI(title="Bramble Videos", version="1.0.0")
+app = FastAPI(title="Bramble Videos", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
@@ -34,6 +34,7 @@ async def health():
     comfyui = False
     comfy_device = ""
     comfy_vram_total = 0
+    chatterbox = False
     try:
         async with httpx.AsyncClient(timeout=2) as client:
             response = await client.get(f"{settings.ollama_url.rstrip('/')}/api/ps")
@@ -54,7 +55,13 @@ async def health():
                     comfy_vram_total = int(device.get("vram_total") or 0)
     except Exception:
         pass
-    return {"status": "ok", "ollama": ollama, "ollama_gpu_vram_bytes": ollama_vram, "comfyui": comfyui, "comfy_device": comfy_device, "comfy_vram_total_bytes": comfy_vram_total, "ffmpeg_encoder": await detect_encoder(), "storage": str(settings.storage_path.resolve())}
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            response = await client.get(f"{settings.chatterbox_url.rstrip('/')}/health")
+            chatterbox = response.status_code == 200
+    except Exception:
+        pass
+    return {"status": "ok", "ollama": ollama, "ollama_gpu_vram_bytes": ollama_vram, "comfyui": comfyui, "comfy_device": comfy_device, "comfy_vram_total_bytes": comfy_vram_total, "chatterbox": chatterbox, "ffmpeg_encoder": await detect_encoder(), "storage": str(settings.storage_path.resolve())}
 
 @app.get("/api/voices")
 async def voices():
@@ -92,7 +99,36 @@ async def upload_file(file: UploadFile = File(...)):
 @app.post("/api/projects")
 async def create_project(request: ProjectCreate):
     scenes = await plan_scenes(request)
-    project = Project(id=uuid4().hex, title=request.title, script=request.script, language=request.language, aspect=request.aspect, custom_width=request.custom_width, custom_height=request.custom_height, voice=request.voice, narration_style=request.narration_style, consistency_lock=request.consistency_lock, generate_images=request.generate_images, reference_denoise=request.reference_denoise, transition=request.transition, background_music_path=request.background_music_path, music_volume=request.music_volume, scenes=scenes)
+    project = Project(
+        id=uuid4().hex,
+        title=request.title,
+        script=request.script,
+        language=request.language,
+        aspect=request.aspect,
+        custom_width=request.custom_width,
+        custom_height=request.custom_height,
+        voice=request.voice,
+        narration_style=request.narration_style,
+        reference_voice_path=request.reference_voice_path,
+        consistency_lock=request.consistency_lock,
+        generate_images=request.generate_images,
+        reference_denoise=request.reference_denoise,
+        transition=request.transition,
+        background_music_path=request.background_music_path,
+        music_volume=request.music_volume,
+        subtitles_enabled=request.subtitles_enabled,
+        subtitle_font=request.subtitle_font,
+        subtitle_size=request.subtitle_size,
+        subtitle_position=request.subtitle_position,
+        subtitle_color=request.subtitle_color,
+        subtitle_stroke_color=request.subtitle_stroke_color,
+        subtitle_stroke_width=request.subtitle_stroke_width,
+        watermark_path=request.watermark_path,
+        watermark_position=request.watermark_position,
+        watermark_opacity=request.watermark_opacity,
+        watermark_width_percent=request.watermark_width_percent,
+        scenes=scenes,
+    )
     save_project(project)
     return project.model_dump()
 
