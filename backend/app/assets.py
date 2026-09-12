@@ -10,14 +10,14 @@ from uuid import uuid4
 from fastapi import UploadFile
 
 from .config import settings
-from .models import Asset
+from .models import Asset, AssetVoiceUpdate
 
 DEFAULT_ASSETS: list[Asset] = [
-    Asset(id="char-bramble", name="Bramble", type="character", aliases=["bramble the bear"], description="Gentle caregiver and father figure; a large grizzly bear.", traits="large pear-shaped soft brown grizzly bear, chunky knitted mustard-yellow scarf, gentle smiling eyes, warm protective expression"),
-    Asset(id="char-grace", name="Grace", type="character", aliases=["grace girl"], description="Compassionate six-year-old girl and heart of the group.", traits="6-year-old girl, curly auburn hair in two low buns, large brown eyes, blue denim overall dress, light blue shirt, green rain boots, kind expressive face"),
-    Asset(id="char-pip", name="Pip", type="character", aliases=["pip squirrel"], description="Tiny curious red squirrel full of joyful energy.", traits="tiny copper-red squirrel, round springy silhouette, huge bushy tail, green aviator cap, wide excited eyes"),
-    Asset(id="char-oliver", name="Oliver", type="character", aliases=["oliver owl"], description="Precise thoughtful barn owl who values wisdom and honesty.", traits="wise beige-and-white barn owl, tall oval silhouette, oversized round reading glasses, brown buttoned vest, thoughtful amber eyes"),
-    Asset(id="char-barnaby", name="Barnaby", type="character", aliases=["barnaby turtle"], description="Shy box turtle who models forgiveness and peace.", traits="small box turtle, green-brown domed shell with painted flower details, tiny red bow tie, shy sweet eyes"),
+    Asset(id="char-bramble", name="Bramble", type="character", aliases=["bramble the bear"], description="Gentle caregiver and father figure; a large grizzly bear.", traits="large pear-shaped soft brown grizzly bear, chunky knitted mustard-yellow scarf, gentle smiling eyes, warm protective expression", voice_style="Warm", voice_speed=0.92),
+    Asset(id="char-grace", name="Grace", type="character", aliases=["grace girl"], description="Compassionate six-year-old girl and heart of the group.", traits="6-year-old girl, curly auburn hair in two low buns, large brown eyes, blue denim overall dress, light blue shirt, green rain boots, kind expressive face", voice_style="Emotional", voice_speed=1.02),
+    Asset(id="char-pip", name="Pip", type="character", aliases=["pip squirrel"], description="Tiny curious red squirrel full of joyful energy.", traits="tiny copper-red squirrel, round springy silhouette, huge bushy tail, green aviator cap, wide excited eyes", voice_style="Inspirational", voice_speed=1.08),
+    Asset(id="char-oliver", name="Oliver", type="character", aliases=["oliver owl"], description="Precise thoughtful barn owl who values wisdom and honesty.", traits="wise beige-and-white barn owl, tall oval silhouette, oversized round reading glasses, brown buttoned vest, thoughtful amber eyes", voice_style="Documentary", voice_speed=0.96),
+    Asset(id="char-barnaby", name="Barnaby", type="character", aliases=["barnaby turtle"], description="Shy box turtle who models forgiveness and peace.", traits="small box turtle, green-brown domed shell with painted flower details, tiny red bow tie, shy sweet eyes", voice_style="Calm", voice_speed=0.90),
     Asset(id="loc-meadowood", name="Meadowood", type="location", aliases=["forest", "meadow"], traits="peaceful Meadowood forest, soft wildflowers, rolling green hills, warm natural sunlight, safe low-stimulation environment"),
     Asset(id="loc-garden-gate", name="Garden Gate", type="location", aliases=["gate", "overgrown gate"], traits="old woven wooden garden gate between mossy stone walls, gentle vines, warm meadow beyond"),
     Asset(id="loc-great-oak", name="Great Oak", type="location", aliases=["oak", "oak tree"], traits="enormous ancient oak tree with mossy roots and a tiny round wooden library door at its base"),
@@ -44,12 +44,19 @@ def load_assets() -> list[Asset]:
         items = [Asset.model_validate(x) for x in json.loads(path.read_text(encoding="utf-8"))]
     except Exception:
         items = []
-    existing = {a.name.lower() for a in items}
+    existing = {a.name.lower(): a for a in items}
     changed = False
-    for asset in DEFAULT_ASSETS:
-        if asset.name.lower() not in existing:
-            items.append(asset.model_copy(deep=True))
+    for default in DEFAULT_ASSETS:
+        current = existing.get(default.name.lower())
+        if not current:
+            items.append(default.model_copy(deep=True))
             changed = True
+            continue
+        if current.type == "character":
+            if current.voice_style == "Warm" and default.voice_style != "Warm" and not current.voice_reference_path and not current.voice:
+                current.voice_style = default.voice_style
+                current.voice_speed = default.voice_speed
+                changed = True
     if changed:
         save_assets(items)
     return items
@@ -90,6 +97,23 @@ async def add_reference(name: str, asset_type: str, file: UploadFile, aliases: s
     else:
         asset = Asset(id=asset_id, name=name.strip(), type=asset_type, aliases=parsed, description=description.strip(), traits=traits.strip(), image_paths=[str(target)])
         items.append(asset)
+    save_assets(items)
+    return asset
+
+def update_voice_profile(asset_id: str, update: AssetVoiceUpdate) -> Asset | None:
+    items = load_assets()
+    asset = next((a for a in items if a.id == asset_id), None)
+    if not asset or asset.type != "character":
+        return None
+    data = update.model_dump()
+    reference = data.get("voice_reference_path")
+    if reference and not Path(reference).exists():
+        raise ValueError("Voice reference file no longer exists")
+    asset.voice = data["voice"]
+    asset.voice_style = data["voice_style"]
+    asset.voice_reference_path = reference
+    asset.voice_speed = data["voice_speed"]
+    asset.voice_volume = data["voice_volume"]
     save_assets(items)
     return asset
 
