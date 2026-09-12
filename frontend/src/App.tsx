@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 type Asset={id:string,name:string,type:string,aliases:string[],description:string,traits:string,image_paths:string[]}
 type Scene={scene_number:number,narration:string,characters:string[],location:string,emotion:string,action:string,image_prompt:string,image_path?:string,duration_seconds:number}
 type Project={id:string,title:string,script:string,language:string,aspect:string,voice:string,consistency_lock:boolean,scenes:Scene[],state:string,progress:number,stage:string,error?:string,output_path?:string,video_encoder?:string}
-const API='http://127.0.0.1:8000/api'
+const API='http://127.0.0.1:8010/api'
 
 export default function App(){
   const [tab,setTab]=useState<'studio'|'assets'|'system'>('studio')
