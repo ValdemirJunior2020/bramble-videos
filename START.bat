@@ -14,13 +14,40 @@ echo ComfyUI  : http://127.0.0.1:8188
 echo Ollama   : http://127.0.0.1:11434
 echo ============================================================
 
+set "NEEDS_INSTALL=0"
+
 if not exist "backend\.venv\Scripts\python.exe" (
-  echo [ERROR] Run INSTALL.bat first.
+  echo [MISSING] backend\.venv\Scripts\python.exe
+  set "NEEDS_INSTALL=1"
+)
+
+if not exist "frontend\node_modules\.bin\vite.cmd" (
+  echo [MISSING] frontend\node_modules\.bin\vite.cmd
+  set "NEEDS_INSTALL=1"
+)
+
+if "!NEEDS_INSTALL!"=="1" (
+  echo.
+  echo Bramble is not fully installed. Running INSTALL.bat now...
+  echo.
+  call "%~dp0INSTALL.bat"
+  if errorlevel 1 (
+    echo.
+    echo [ERROR] Automatic installation failed.
+    echo Fix the error shown by INSTALL.bat, then run START.bat again.
+    pause
+    exit /b 1
+  )
+)
+
+if not exist "backend\.venv\Scripts\python.exe" (
+  echo [ERROR] Backend Python environment is still missing after install.
   pause
   exit /b 1
 )
-if not exist "frontend\node_modules" (
-  echo [ERROR] Run INSTALL.bat first.
+
+if not exist "frontend\node_modules\.bin\vite.cmd" (
+  echo [ERROR] Frontend packages are still missing after install.
   pause
   exit /b 1
 )
