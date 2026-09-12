@@ -7,11 +7,16 @@ echo ============================================================
 echo BRAMBLE VIDEOS - LOCAL INSTALLER
 echo ============================================================
 
-where python >nul 2>nul || (echo [ERROR] Python was not found in PATH.& pause & exit /b 1)
-where node >nul 2>nul || (echo [ERROR] Node.js was not found in PATH.& pause & exit /b 1)
-where npm >nul 2>nul || (echo [ERROR] npm was not found in PATH.& pause & exit /b 1)
-where ffmpeg >nul 2>nul || (echo [ERROR] FFmpeg was not found in PATH.& pause & exit /b 1)
-where ffprobe >nul 2>nul || (echo [ERROR] FFprobe was not found in PATH.& pause & exit /b 1)
+where python >nul 2>nul
+if errorlevel 1 goto :missing_python
+where node >nul 2>nul
+if errorlevel 1 goto :missing_node
+where npm >nul 2>nul
+if errorlevel 1 goto :missing_npm
+where ffmpeg >nul 2>nul
+if errorlevel 1 goto :missing_ffmpeg
+where ffprobe >nul 2>nul
+if errorlevel 1 goto :missing_ffprobe
 
 echo [OK] Python
 python --version
@@ -29,21 +34,28 @@ if not exist ".env" (
 
 if not exist "backend\.venv\Scripts\python.exe" (
   echo Creating backend virtual environment...
-  python -m venv backend\.venv || (pause & exit /b 1)
+  python -m venv backend\.venv
+  if errorlevel 1 goto :fail
 ) else (
   echo [SKIP] Backend virtual environment already exists
 )
 
 call backend\.venv\Scripts\activate.bat
 python -m pip install --upgrade pip
-python -m pip install -r backend\requirements.txt || (pause & exit /b 1)
+if errorlevel 1 goto :fail_active
+python -m pip install -r backend\requirements.txt
+if errorlevel 1 goto :fail_active
 deactivate
 
 if exist "frontend\node_modules" (
   echo [SKIP] frontend\node_modules already exists
 ) else (
   pushd frontend
-  call npm install || (popd & pause & exit /b 1)
+  call npm install
+  if errorlevel 1 (
+    popd
+    goto :fail
+  )
   popd
 )
 
@@ -56,9 +68,10 @@ echo.
 echo Checking AMD hardware video encoder...
 ffmpeg -hide_banner -encoders 2>nul | findstr /i "h264_amf" >nul
 if errorlevel 1 (
-  echo [INFO] h264_amf not present in this FFmpeg build. CPU video fallback will work.
+  echo [INFO] h264_amf is not present in this FFmpeg build.
+  echo [INFO] Bramble Videos will use CPU video encoding until an FFmpeg build with AMD AMF is installed.
 ) else (
-  echo [OK] AMD AMF h264 encoder detected - final rendering can use your Radeon GPU.
+  echo [OK] AMD AMF h264 encoder detected - final video rendering can use your Radeon GPU.
 )
 
 echo.
@@ -75,6 +88,44 @@ if errorlevel 1 (
 )
 
 echo.
+echo Running quick code validation...
+call TEST.bat /quiet
+if errorlevel 1 (
+  echo [WARN] Installation completed, but the validation step reported an error.
+  echo Run TEST.bat again to see the details.
+)
+
+echo.
 echo INSTALL COMPLETE.
 echo Double-click START.bat.
 pause
+exit /b 0
+
+:fail_active
+deactivate
+:fail
+echo.
+echo [ERROR] Installation failed. Read the error above.
+pause
+exit /b 1
+
+:missing_python
+echo [ERROR] Python was not found in PATH.
+pause
+exit /b 1
+:missing_node
+echo [ERROR] Node.js was not found in PATH.
+pause
+exit /b 1
+:missing_npm
+echo [ERROR] npm was not found in PATH.
+pause
+exit /b 1
+:missing_ffmpeg
+echo [ERROR] FFmpeg was not found in PATH.
+pause
+exit /b 1
+:missing_ffprobe
+echo [ERROR] FFprobe was not found in PATH.
+pause
+exit /b 1
