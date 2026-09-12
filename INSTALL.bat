@@ -12,7 +12,7 @@ echo ============================================================
 echo Install started %date% %time% > "%LOG%"
 echo Folder: %CD% >> "%LOG%"
 
-echo [1/7] Checking required programs...
+echo [1/8] Checking required programs...
 where python >nul 2>nul
 if errorlevel 1 goto :missing_python
 where node >nul 2>nul
@@ -37,7 +37,7 @@ echo [OK] FFmpeg
 ffmpeg -version | findstr /b "ffmpeg version"
 
 echo.
-echo [2/7] Checking environment file...
+echo [2/8] Checking environment file...
 if not exist ".env" (
   copy /y ".env.example" ".env" >nul
   echo [OK] Created .env from .env.example
@@ -46,126 +46,110 @@ if not exist ".env" (
 )
 
 echo.
-echo [3/7] Preparing backend Python environment...
+echo [3/8] Preparing backend Python environment...
 if exist "backend\.venv" if not exist "backend\.venv\Scripts\python.exe" (
   echo [WARN] Broken backend virtual environment found. Rebuilding it...
-  echo Removing broken backend\.venv >> "%LOG%"
   rmdir /s /q "backend\.venv"
 )
-
 if not exist "backend\.venv\Scripts\python.exe" (
-  echo Creating backend virtual environment...
   python -m venv "backend\.venv" >> "%LOG%" 2>&1
-  if errorlevel 1 (
-    echo [ERROR] Python failed to create backend\.venv.
-    goto :fail
-  )
+  if errorlevel 1 goto :fail
 ) else (
   echo [SKIP] Backend virtual environment already exists
 )
-
-if not exist "backend\.venv\Scripts\python.exe" (
-  echo [ERROR] backend\.venv\Scripts\python.exe is still missing.
-  goto :fail
-)
-echo [OK] Backend Python created
+if not exist "backend\.venv\Scripts\python.exe" goto :fail
 
 echo.
-echo [4/7] Installing backend packages...
+echo [4/8] Installing backend packages...
 "backend\.venv\Scripts\python.exe" -m pip install --upgrade pip >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo [ERROR] pip upgrade failed. See install.log.
-  goto :fail
-)
+if errorlevel 1 goto :fail
 "backend\.venv\Scripts\python.exe" -m pip install -r "backend\requirements.txt" >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo [ERROR] Backend package install failed. See install.log.
-  goto :fail
-)
-
+if errorlevel 1 goto :fail
 "backend\.venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, pydantic, PIL" >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo [ERROR] Backend package verification failed. See install.log.
-  goto :fail
-)
+if errorlevel 1 goto :fail
 echo [OK] Backend packages verified
 
 echo.
-echo [5/7] Installing frontend packages...
+echo [5/8] Installing expressive Chatterbox voice service...
+if exist "chatterbox_service\.venv" if not exist "chatterbox_service\.venv\Scripts\python.exe" (
+  echo [WARN] Broken Chatterbox environment found. Rebuilding it...
+  rmdir /s /q "chatterbox_service\.venv"
+)
+if not exist "chatterbox_service\.venv\Scripts\python.exe" (
+  echo Creating Chatterbox Python environment...
+  python -m venv "chatterbox_service\.venv" >> "%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+)
+"chatterbox_service\.venv\Scripts\python.exe" -m pip install --upgrade pip >> "%LOG%" 2>&1
+if errorlevel 1 goto :fail
+"chatterbox_service\.venv\Scripts\python.exe" -c "import chatterbox, fastapi, uvicorn" >nul 2>nul
+if errorlevel 1 (
+  echo Installing Chatterbox TTS. First install can take several minutes...
+  "chatterbox_service\.venv\Scripts\python.exe" -m pip install -r "chatterbox_service\requirements.txt" >> "%LOG%" 2>&1
+  if errorlevel 1 (
+    echo [ERROR] Chatterbox install failed. See install.log.
+    goto :fail
+  )
+) else (
+  echo [SKIP] Chatterbox packages already installed
+)
+"chatterbox_service\.venv\Scripts\python.exe" -c "import chatterbox, fastapi, uvicorn" >> "%LOG%" 2>&1
+if errorlevel 1 goto :fail
+echo [OK] Expressive voice service verified
+
+echo.
+echo [6/8] Installing frontend packages...
 if exist "frontend\node_modules\.bin\vite.cmd" (
   echo [SKIP] Frontend packages already installed
 ) else (
-  if exist "frontend\node_modules" (
-    echo [WARN] Incomplete frontend node_modules found. Rebuilding it...
-    rmdir /s /q "frontend\node_modules"
-  )
+  if exist "frontend\node_modules" rmdir /s /q "frontend\node_modules"
   pushd "frontend"
-  echo Running npm install. This can take a few minutes...
+  echo Running npm install...
   call npm install >> "%LOG%" 2>&1
   set "NPM_RESULT=!ERRORLEVEL!"
   popd
-  if not "!NPM_RESULT!"=="0" (
-    echo [ERROR] npm install failed. See install.log.
-    goto :fail
-  )
+  if not "!NPM_RESULT!"=="0" goto :fail
 )
-
-if not exist "frontend\node_modules\.bin\vite.cmd" (
-  echo [ERROR] Frontend package installation did not create Vite.
-  goto :fail
-)
+if not exist "frontend\node_modules\.bin\vite.cmd" goto :fail
 echo [OK] Frontend packages verified
 
 echo.
-echo [6/7] Creating storage folders...
+echo [7/8] Creating storage folders and checking local AI...
 if not exist "storage" mkdir "storage"
 if not exist "storage\assets" mkdir "storage\assets"
 if not exist "storage\projects" mkdir "storage\projects"
 if not exist "storage\uploads" mkdir "storage\uploads"
-
-echo.
-echo Checking AMD hardware video encoder...
 ffmpeg -hide_banner -encoders 2>nul | findstr /i "h264_amf" >nul
 if errorlevel 1 (
-  echo [INFO] h264_amf is not present in this FFmpeg build.
-  echo [INFO] Bramble Videos will use CPU video encoding until an FFmpeg build with AMD AMF is installed.
+  echo [INFO] AMD AMF not found in this FFmpeg build. CPU video fallback will be used.
 ) else (
-  echo [OK] AMD AMF h264 encoder detected - final video rendering can use your Radeon GPU.
+  echo [OK] AMD AMF h264 encoder detected
 )
-
-echo.
 where ollama >nul 2>nul
 if errorlevel 1 (
-  echo [INFO] Ollama was not found. Install it before using AI scene planning.
+  echo [INFO] Ollama was not found.
 ) else (
   ollama list | findstr /i "qwen3:8b" >nul
-  if errorlevel 1 (
-    echo [INFO] qwen3:8b is not installed. Run: ollama pull qwen3:8b
-  ) else (
-    echo [OK] qwen3:8b found
-  )
+  if errorlevel 1 (echo [INFO] qwen3:8b is not installed. Run: ollama pull qwen3:8b) else (echo [OK] qwen3:8b found)
 )
 
 echo.
-echo [7/7] Running code validation...
+echo [8/8] Running code validation...
 call TEST.bat /quiet >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo [ERROR] Validation failed. See install.log.
-  goto :fail
-)
-
+if errorlevel 1 goto :fail
 if not exist "backend\.venv\Scripts\python.exe" goto :fail
+if not exist "chatterbox_service\.venv\Scripts\python.exe" goto :fail
 if not exist "frontend\node_modules\.bin\vite.cmd" goto :fail
 
 > ".bramble-installed" echo Installed %date% %time%
-
 echo.
 echo ============================================================
 echo INSTALL COMPLETE - EVERYTHING VERIFIED
 echo ============================================================
-echo Backend Python : FOUND
-echo Frontend Vite  : FOUND
-echo Marker         : .bramble-installed
+echo Backend Python     : FOUND
+echo Chatterbox Voice   : FOUND
+echo Frontend Vite      : FOUND
+echo Marker             : .bramble-installed
 echo.
 echo Double-click START.bat.
 echo.
@@ -177,7 +161,6 @@ echo.
 echo ============================================================
 echo [ERROR] INSTALLATION FAILED
 echo ============================================================
-echo The installation was NOT marked complete.
 echo Open this file for the real error:
 echo %LOG%
 if exist ".bramble-installed" del /q ".bramble-installed" >nul 2>nul
@@ -186,7 +169,6 @@ exit /b 1
 
 :missing_python
 echo [ERROR] Python was not found in PATH.
-echo Install Python and make sure "Add Python to PATH" is enabled.
 pause
 exit /b 1
 :missing_node
