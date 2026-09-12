@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 
+from .assets import find_asset
 from .config import settings
 from .models import VoiceInfo
 
@@ -29,6 +30,8 @@ STYLE_RATE = {
     "dramatic": 0,
     "sermon": -2,
 }
+SPEECH_VERBS = "said|asked|replied|answered|whispered|shouted|cried|called|squeaked|murmured|laughed|exclaimed|yelled|spoke"
+QUOTE_PATTERN = re.compile(r'[“\"]([^”\"]+)[”\"]')
 
 
 def _ps_escape(value: str) -> str:
@@ -67,6 +70,79 @@ def split_phrases(text: str, max_words: int = 9) -> list[str]:
         else:
             out.extend(" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words))
     return out
+
+
+def _speaker_from_context(prefix: str, suffix: str, scene_characters: list[str]) -> str:
+    candidates = [name for name in scene_characters if name]
+    for name in candidates:
+        escaped = re.escape(name)
+        if re.search(rf"\b{escaped}\b\s+(?:{SPEECH_VERBS})\b", suffix, re.I):
+            return name
+        if re.search(rf"\b{escaped}\b\s+(?:{SPEECH_VERBS})\b", prefix[-140:], re.I):
+            return name
+        if re.search(rf"(?:{SPEECH_VERBS})\s+\b{escaped}\b", suffix, re.I):
+            return name
+    nearest = ""
+    nearest_pos = -1
+    low = prefix.lower()
+    for name in candidates:
+        pos = low.rfind(name.lower())
+        if pos > nearest_pos:
+            nearest = name
+            nearest_pos = pos
+    if nearest:
+        return nearest
+    if len(candidates) == 1:
+        return candidates[0]
+    return "Narrator"
+
+
+def split_voice_chunks(text: str, scene_characters: list[str]) -> list[tuple[str, str]]:
+    """Split narration into narrator/dialogue chunks without rewriting the script.
+
+    Supports explicit `Name: dialogue`, quoted dialogue with nearby attribution, and
+    falls back to Narrator when a speaker cannot be identified safely.
+    """
+    normalized = re.sub(r"\s+", " ", text.strip())
+    if not normalized:
+        return []
+    names = [name for name in scene_characters if name]
+    if names:
+        name_alt = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+        explicit = re.compile(rf"\b({name_alt})\s*:\s*", re.I)
+        matches = list(explicit.finditer(normalized))
+        if matches:
+            chunks: list[tuple[str, str]] = []
+            if matches[0].start() > 0:
+                lead = normalized[:matches[0].start()].strip()
+                if lead:
+                    chunks.append(("Narrator", lead))
+            for i, match in enumerate(matches):
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(normalized)
+                body = normalized[match.end():end].strip()
+                canonical = next((n for n in names if n.lower() == match.group(1).lower()), match.group(1))
+                if body:
+                    chunks.append((canonical, body))
+            return chunks
+
+    chunks: list[tuple[str, str]] = []
+    cursor = 0
+    for match in QUOTE_PATTERN.finditer(normalized):
+        before = normalized[cursor:match.start()].strip()
+        if before:
+            chunks.append(("Narrator", before))
+        prefix = normalized[:match.start()]
+        suffix = normalized[match.end():match.end() + 120]
+        speaker = _speaker_from_context(prefix, suffix, names)
+        dialogue = match.group(1).strip()
+        if dialogue:
+            chunks.append((speaker, dialogue))
+        cursor = match.end()
+    tail = normalized[cursor:].strip()
+    if tail:
+        chunks.append(("Narrator", tail))
+    return chunks or [("Narrator", normalized)]
+
 
 async def _chatterbox_available() -> bool:
     try:
@@ -117,13 +193,20 @@ async def _chatterbox(text: str, style: str, output: Path, reference_voice: Path
         response.raise_for_status()
         output.write_bytes(response.content)
 
-async def normalize_wav(source: Path, target: Path, speed: float = 1.0) -> None:
+async def normalize_wav(source: Path, target: Path, speed: float = 1.0, volume: float = 1.0) -> None:
     filters: list[str] = []
+    chain: list[str] = []
+    speed = max(0.5, min(2.0, speed))
+    volume = max(0.1, min(3.0, volume))
     if abs(speed - 1.0) > 0.001:
-        filters = ["-filter:a", f"atempo={speed:.4f}"]
+        chain.append(f"atempo={speed:.4f}")
+    if abs(volume - 1.0) > 0.001:
+        chain.append(f"volume={volume:.3f}")
+    if chain:
+        filters = ["-filter:a", ",".join(chain)]
     await _run(["ffmpeg", "-y", "-i", str(source), *filters, "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(target)])
 
-async def synthesize_phrase(text: str, language: str, voice: str, style: str, output: Path, reference_voice_path: str | None = None) -> None:
+async def synthesize_phrase(text: str, language: str, voice: str, style: str, output: Path, reference_voice_path: str | None = None, speed: float = 1.0, volume: float = 1.0) -> None:
     raw = output.with_name(output.stem + "-raw.wav")
     reference = Path(reference_voice_path) if reference_voice_path else None
     use_chatterbox = voice == "__chatterbox__" or bool(reference) or (language == "en" and not voice)
@@ -134,7 +217,7 @@ async def synthesize_phrase(text: str, language: str, voice: str, style: str, ou
             await _sapi(text, language, voice, style, raw)
     else:
         await _sapi(text, language, voice, style, raw)
-    await normalize_wav(raw, output, settings.narration_speed)
+    await normalize_wav(raw, output, settings.narration_speed * speed, volume)
     raw.unlink(missing_ok=True)
 
 async def duration(path: Path) -> float:
@@ -151,6 +234,19 @@ def _srt_time(seconds: float) -> str:
     s, milli = divmod(rem, 1000)
     return f"{h:02}:{m:02}:{s:02},{milli:03}"
 
+
+def _voice_for_speaker(speaker: str, default_voice: str, default_style: str, default_reference: str | None) -> tuple[str, str, str | None, float, float]:
+    if not speaker or speaker == "Narrator":
+        return default_voice, default_style, default_reference, 1.0, 1.0
+    asset = find_asset(speaker)
+    if not asset or asset.type != "character":
+        return default_voice, default_style, default_reference, 1.0, 1.0
+    voice = asset.voice or "__chatterbox__"
+    style = asset.voice_style or default_style
+    reference = asset.voice_reference_path or None
+    return voice, style, reference, asset.voice_speed, asset.voice_volume
+
+
 async def build_narration_and_subtitles(scenes, language: str, voice: str, style: str, workdir: Path, reference_voice_path: str | None = None):
     audio_dir = workdir / "audio_parts"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -162,16 +258,37 @@ async def build_narration_and_subtitles(scenes, language: str, voice: str, style
     index = 0
     for scene in scenes:
         scene_start = cursor
-        for phrase in split_phrases(scene.narration):
-            index += 1
-            part = audio_dir / f"phrase-{index:04d}.wav"
-            await synthesize_phrase(phrase, language, voice, style, part, reference_voice_path)
-            seconds = await duration(part)
-            subtitle_entries.append({"index": index, "scene_number": scene.scene_number, "text": phrase, "start": cursor, "end": cursor + seconds})
-            concat_entries.append(part)
-            cursor += seconds
-            concat_entries.append(silence)
-            cursor += 0.12
+        voice_chunks = split_voice_chunks(scene.narration, scene.characters)
+        for speaker, chunk in voice_chunks:
+            selected_voice, selected_style, selected_reference, selected_speed, selected_volume = _voice_for_speaker(
+                speaker, voice, style, reference_voice_path
+            )
+            for phrase in split_phrases(chunk):
+                index += 1
+                part = audio_dir / f"phrase-{index:04d}.wav"
+                await synthesize_phrase(
+                    phrase,
+                    language,
+                    selected_voice,
+                    selected_style,
+                    part,
+                    selected_reference,
+                    selected_speed,
+                    selected_volume,
+                )
+                seconds = await duration(part)
+                subtitle_entries.append({
+                    "index": index,
+                    "scene_number": scene.scene_number,
+                    "speaker": speaker,
+                    "text": phrase,
+                    "start": cursor,
+                    "end": cursor + seconds,
+                })
+                concat_entries.append(part)
+                cursor += seconds
+                concat_entries.append(silence)
+                cursor += 0.12
         scene.start_seconds = scene_start
         scene.end_seconds = cursor
         scene.duration_seconds = max(0.1, cursor - scene_start)
