@@ -22,6 +22,7 @@ DEFAULT_ASSETS: list[Asset] = [
     Asset(id="loc-garden-gate", name="Garden Gate", type="location", aliases=["gate", "overgrown gate"], traits="old woven wooden garden gate between mossy stone walls, gentle vines, warm meadow beyond"),
     Asset(id="loc-great-oak", name="Great Oak", type="location", aliases=["oak", "oak tree"], traits="enormous ancient oak tree with mossy roots and a tiny round wooden library door at its base"),
     Asset(id="loc-stream", name="The Stream", type="location", aliases=["stream", "creek"], traits="shallow clear stream over smooth pebbles, grassy banks, calm meadow light"),
+    Asset(id="loc-bramble-cave", name="Bramble's Cave", type="location", aliases=["Bramble’s Cave", "cave", "Bramble cave"], traits="cozy safe woodland cave home with warm amber light, rounded stone walls, simple wooden furniture, mustard textiles and a calm welcoming feeling"),
 ]
 
 def _db_path() -> Path:
