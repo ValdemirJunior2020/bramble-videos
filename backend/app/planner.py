@@ -8,6 +8,7 @@ from .config import settings
 from .models import ProjectCreate, Scene
 
 MASTER_NEGATIVE = "ugly, deformed, mutated, extra limbs, bad anatomy, duplicate character, wrong character, wrong clothing, text, watermark, signature, scary, aggressive, hyper-saturated, neon colors, glowing eyes, blurry, low quality, jpeg artifacts"
+PRONOUN_PATTERN = re.compile(r"\b(he|she|they|him|her|them|his|hers|their|ele|ela|eles|elas|dele|dela|deles|delas)\b", re.I)
 
 def segment_script(script: str, target_words: int = 28, max_words: int = 40) -> list[str]:
     text = re.sub(r"\s+", " ", script.strip())
@@ -18,13 +19,18 @@ def segment_script(script: str, target_words: int = 28, max_words: int = 40) -> 
     for sentence in sentences:
         words = sentence.split()
         if current and (count + len(words) > max_words or count >= target_words):
-            out.append(" ".join(current)); current = []; count = 0
+            out.append(" ".join(current))
+            current = []
+            count = 0
         if len(words) > max_words:
             if current:
-                out.append(" ".join(current)); current = []; count = 0
+                out.append(" ".join(current))
+                current = []
+                count = 0
             out.extend(" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words))
             continue
-        current.append(sentence); count += len(words)
+        current.append(sentence)
+        count += len(words)
     if current:
         out.append(" ".join(current))
     return out
@@ -37,7 +43,7 @@ def _fallback(narration: str):
     locs = recognized_names(narration, "location")
     lower = narration.lower()
     emotion = next((word for word in ["sad", "afraid", "scared", "happy", "grateful", "curious", "worried", "peaceful", "excited", "surprised"] if word in lower), "gentle")
-    return {"characters": chars, "location": locs[0] if locs else "Meadowood", "emotion": emotion, "action": narration[:220]}
+    return {"characters": chars, "location": locs[0] if locs else "", "emotion": emotion, "action": narration[:220]}
 
 async def _annotate(segments: list[str], language: str):
     body = {
@@ -45,7 +51,7 @@ async def _annotate(segments: list[str], language: str):
         "stream": False,
         "format": "json",
         "messages": [
-            {"role": "system", "content": "You are the scene director for Bramble & Grace, a calm low-stimulation 3D claymation children's series. Analyze each narration segment but never rewrite, translate, shorten, expand, or reorder it. Return JSON only with key scenes. For each scene return scene_number, characters using only names from the asset catalog, location, emotion, action, and visual_description. Keep movement gentle, child-safe, visually simple, and use no more than three active characters unless required."},
+            {"role": "system", "content": "You are the scene director for Bramble & Grace, a calm low-stimulation 3D claymation children's series. Analyze each narration segment but never rewrite, translate, shorten, expand, or reorder it. Return JSON only with key scenes. For each scene return scene_number, characters using only names from the asset catalog, location, emotion, action, and visual_description. Preserve continuity from one scene to the next when pronouns refer to a character or the location has not changed. Keep movement gentle, child-safe, visually simple, and use no more than three active characters unless required."},
             {"role": "user", "content": json.dumps({"language": language, "assets": _catalog(), "segments": [{"scene_number": i + 1, "narration": s} for i, s in enumerate(segments)]}, ensure_ascii=False)}
         ],
         "options": {"temperature": 0.15}
@@ -83,17 +89,30 @@ async def plan_scenes(request: ProjectCreate) -> list[Scene]:
     allowed_chars = {a.name for a in load_assets() if a.type == "character"}
     allowed_locations = {a.name for a in load_assets() if a.type == "location"}
     scenes: list[Scene] = []
+    previous_chars: list[str] = []
+    previous_location = "Meadowood"
     for i, narration in enumerate(segments, 1):
         fallback = _fallback(narration)
         meta = by_num.get(i, {})
         chars = [x for x in meta.get("characters", fallback["characters"]) if x in allowed_chars]
-        for name in recognized_names(narration, "character"):
+        explicit_chars = recognized_names(narration, "character")
+        for name in explicit_chars:
             if name not in chars:
                 chars.append(name)
-        location = meta.get("location") or fallback["location"]
+        if not explicit_chars and not chars and previous_chars and PRONOUN_PATTERN.search(narration):
+            chars = previous_chars.copy()
+        chars = chars[:3]
+        explicit_locations = recognized_names(narration, "location")
+        location = meta.get("location") or (explicit_locations[0] if explicit_locations else fallback["location"])
         if location not in allowed_locations:
-            location = fallback["location"]
-        scene = Scene(scene_number=i, narration=narration, characters=chars[:3], location=location, emotion=str(meta.get("emotion") or fallback["emotion"])[:80], action=str(meta.get("action") or meta.get("visual_description") or fallback["action"])[:600], negative_prompt=MASTER_NEGATIVE)
+            location = explicit_locations[0] if explicit_locations else previous_location
+        if not explicit_locations and not meta.get("location"):
+            location = previous_location
+        scene = Scene(scene_number=i, narration=narration, characters=chars, location=location, emotion=str(meta.get("emotion") or fallback["emotion"])[:80], action=str(meta.get("action") or meta.get("visual_description") or fallback["action"])[:600], negative_prompt=MASTER_NEGATIVE)
         scene.image_prompt = build_prompt(scene)
         scenes.append(scene)
+        if chars:
+            previous_chars = chars.copy()
+        if location:
+            previous_location = location
     return scenes
