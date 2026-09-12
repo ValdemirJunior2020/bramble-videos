@@ -23,7 +23,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http
 
 @app.get("/api/health")
 async def health():
-    ollama = False; ollama_vram = 0
+    ollama = False
+    ollama_vram = 0
     try:
         async with httpx.AsyncClient(timeout=2) as client:
             response = await client.get(f"{settings.ollama_url.rstrip('/')}/api/ps")
@@ -106,17 +107,38 @@ async def regenerate_scene(project_id: str, scene_number: int):
         raise HTTPException(404, "Scene not found")
     out = project_dir(project_id) / "images" / f"scene-{scene.scene_number:03d}.png"
     await generate_scene_image(project, scene, out)
-    scene.image_path = str(out); save_project(project); return scene.model_dump()
+    scene.image_path = str(out)
+    save_project(project)
+    return scene.model_dump()
+
+@app.get("/api/projects/{project_id}/scenes/{scene_number}/image")
+def scene_image(project_id: str, scene_number: int):
+    project = load_project(project_id)
+    scene = next((item for item in project.scenes if item.scene_number == scene_number), None)
+    if not scene or not scene.image_path:
+        raise HTTPException(404, "Scene image not ready")
+    path = Path(scene.image_path)
+    if not path.exists():
+        raise HTTPException(404, "Scene image not ready")
+    return FileResponse(path)
 
 @app.post("/api/projects/{project_id}/render")
 def render(project_id: str, request: RenderRequest):
     try:
-        load_project(project_id); start_render(project_id, request.regenerate_all_images)
+        load_project(project_id)
+        start_render(project_id, request.regenerate_all_images)
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
     except RuntimeError as exc:
         raise HTTPException(409, str(exc))
     return {"ok": True}
+
+@app.get("/api/projects/{project_id}/subtitles")
+def subtitles(project_id: str):
+    project = load_project(project_id)
+    if not project.subtitle_path or not Path(project.subtitle_path).exists():
+        raise HTTPException(404, "Subtitles not ready")
+    return FileResponse(project.subtitle_path, media_type="application/x-subrip", filename=f"{project.title}.srt")
 
 @app.get("/api/projects/{project_id}/video")
 def video(project_id: str):
