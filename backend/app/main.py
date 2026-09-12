@@ -18,7 +18,7 @@ from .pipeline import load_project, project_dir, save_project, start_render
 from .planner import plan_scenes, build_prompt
 from .video import detect_encoder
 
-app = FastAPI(title="Bramble Videos", version="1.1.0")
+app = FastAPI(title="Bramble Videos", version="1.1.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
@@ -180,7 +180,12 @@ def scene_image(project_id: str, scene_number: int):
     return FileResponse(path)
 
 @app.post("/api/projects/{project_id}/render")
-def render(project_id: str, request: RenderRequest):
+async def render(project_id: str, request: RenderRequest):
+    """Start the background render while still inside FastAPI's active event loop.
+
+    This endpoint MUST stay async. A normal `def` route runs in FastAPI's worker
+    thread pool, where asyncio.create_task() has no running event loop.
+    """
     try:
         load_project(project_id)
         start_render(project_id, request.regenerate_all_images)
