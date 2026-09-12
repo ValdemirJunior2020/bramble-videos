@@ -28,6 +28,25 @@ def _encoder_args(encoder: str) -> list[str]:
 def _escape_sub(path: Path) -> str:
     return path.resolve().as_posix().replace("'", "\\'").replace(":", "\\:")
 
+def _ass_color(value: str) -> str:
+    raw = value.lstrip("#")
+    if len(raw) != 6:
+        raw = "FFFFFF"
+    rr, gg, bb = raw[0:2], raw[2:4], raw[4:6]
+    return f"&H00{bb}{gg}{rr}"
+
+def _subtitle_alignment(position: str) -> int:
+    return {"top": 8, "middle": 5, "bottom": 2}.get(position, 2)
+
+def _watermark_overlay(position: str) -> str:
+    margin = 24
+    return {
+        "top-left": f"{margin}:{margin}",
+        "top-right": f"W-w-{margin}:{margin}",
+        "bottom-left": f"{margin}:H-h-{margin}",
+        "bottom-right": f"W-w-{margin}:H-h-{margin}",
+    }.get(position, f"W-w-{margin}:H-h-{margin}")
+
 async def make_scene_clip(image: Path, seconds: float, project: Project, output: Path, index: int, encoder: str) -> None:
     width, height = dimensions(project)
     frames = max(1, round(seconds * 30))
@@ -50,12 +69,42 @@ async def concat_clips(clips: list[Path], output: Path, encoder: str) -> None:
 
 async def render_final(visuals: Path, narration: Path, subtitles: Path, output: Path, project: Project, encoder: str) -> str:
     cmd = ["ffmpeg", "-y", "-i", str(visuals), "-i", str(narration)]
+    filters: list[str] = []
+    next_input = 2
     audio_map = ["-map", "1:a:0"]
-    filters = [f"[0:v]subtitles='{_escape_sub(subtitles)}':force_style='FontName=Arial,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=3,Shadow=0,Alignment=2,MarginV=65'[v]"]
+
     if project.background_music_path and Path(project.background_music_path).exists():
+        music_index = next_input
+        next_input += 1
         cmd += ["-stream_loop", "-1", "-i", project.background_music_path]
-        filters += [f"[2:a]volume={project.music_volume}[m]", "[1:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]"]
+        filters += [f"[{music_index}:a]volume={project.music_volume}[m]", "[1:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]"]
         audio_map = ["-map", "[a]"]
+
+    video_label = "v0"
+    if project.subtitles_enabled:
+        style = (
+            f"FontName={project.subtitle_font},"
+            f"FontSize={project.subtitle_size},"
+            f"PrimaryColour={_ass_color(project.subtitle_color)},"
+            f"OutlineColour={_ass_color(project.subtitle_stroke_color)},"
+            f"Outline={project.subtitle_stroke_width},Shadow=0,"
+            f"Alignment={_subtitle_alignment(project.subtitle_position)},MarginV=65"
+        )
+        filters.append(f"[0:v]subtitles='{_escape_sub(subtitles)}':force_style='{style}'[{video_label}]")
+    else:
+        filters.append(f"[0:v]null[{video_label}]")
+
+    if project.watermark_path and Path(project.watermark_path).exists():
+        watermark_index = next_input
+        cmd += ["-i", project.watermark_path]
+        width, _ = dimensions(project)
+        wm_width = max(48, round(width * project.watermark_width_percent / 100))
+        filters.append(f"[{watermark_index}:v]scale={wm_width}:-1,format=rgba,colorchannelmixer=aa={project.watermark_opacity}[wm]")
+        overlay = _watermark_overlay(project.watermark_position)
+        filters.append(f"[{video_label}][wm]overlay={overlay}[v]")
+    else:
+        filters.append(f"[{video_label}]null[v]")
+
     cmd += ["-filter_complex", ";".join(filters), "-map", "[v]", *audio_map, "-shortest", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-pix_fmt", "yuv420p"]
     code, _, _ = await _run([*cmd, *_encoder_args(encoder), str(output)], allow_fail=True)
     if code == 0:
