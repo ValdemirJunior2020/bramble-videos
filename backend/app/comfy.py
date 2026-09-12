@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 from pathlib import Path
 from uuid import uuid4
@@ -66,23 +67,28 @@ def _reference_paths(scene: Scene) -> list[Path]:
     for name in scene.characters:
         asset = find_asset(name)
         if asset:
-            for value in asset.image_paths:
-                path = Path(value)
-                if path.exists():
-                    paths.append(path); break
-    return paths
+            valid = [Path(value) for value in asset.image_paths if Path(value).exists()]
+            paths.extend(valid[:4])
+    return paths[:8]
 
 def _reference_sheet(scene: Scene, out: Path, width: int, height: int) -> Path | None:
     refs = _reference_paths(scene)
     if not refs:
         return None
     canvas = Image.new("RGB", (width, height), "#f2ead9")
-    cell_w = max(1, width // len(refs))
+    cols = min(4, max(1, math.ceil(math.sqrt(len(refs)))))
+    rows = max(1, math.ceil(len(refs) / cols))
+    cell_w, cell_h = width // cols, height // rows
     for i, path in enumerate(refs):
         image = Image.open(path).convert("RGB")
-        fitted = ImageOps.contain(image, (max(64, cell_w - 20), max(64, height - 40)))
-        canvas.paste(fitted, (i * cell_w + (cell_w - fitted.width) // 2, (height - fitted.height) // 2))
-    out.parent.mkdir(parents=True, exist_ok=True); canvas.save(out, quality=95); return out
+        fitted = ImageOps.contain(image, (max(64, cell_w - 24), max(64, cell_h - 24)))
+        col, row = i % cols, i // cols
+        x = col * cell_w + (cell_w - fitted.width) // 2
+        y = row * cell_h + (cell_h - fitted.height) // 2
+        canvas.paste(fitted, (x, y))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out, quality=95)
+    return out
 
 async def _upload_reference(path: Path) -> str:
     async with httpx.AsyncClient(timeout=30) as client:
