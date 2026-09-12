@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 
 from .assets import add_reference, delete_asset, load_assets
 from .audio import list_sapi_voices
-from .comfy import health as comfy_health, generate_scene_image
+from .comfy import generate_scene_image
 from .config import settings
 from .models import Project, ProjectCreate, RenderRequest, SceneUpdate
 from .pipeline import load_project, project_dir, save_project, start_render
@@ -25,6 +25,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http
 async def health():
     ollama = False
     ollama_vram = 0
+    comfyui = False
+    comfy_device = ""
+    comfy_vram_total = 0
     try:
         async with httpx.AsyncClient(timeout=2) as client:
             response = await client.get(f"{settings.ollama_url.rstrip('/')}/api/ps")
@@ -33,7 +36,19 @@ async def health():
                 ollama_vram = sum(int(model.get("size_vram") or 0) for model in response.json().get("models", []))
     except Exception:
         pass
-    return {"status": "ok", "ollama": ollama, "ollama_gpu_vram_bytes": ollama_vram, "comfyui": await comfy_health(), "ffmpeg_encoder": await detect_encoder(), "storage": str(settings.storage_path.resolve())}
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            response = await client.get(f"{settings.comfyui_url.rstrip('/')}/system_stats")
+            comfyui = response.status_code == 200
+            if comfyui:
+                devices = response.json().get("devices", [])
+                if devices:
+                    device = devices[0]
+                    comfy_device = str(device.get("name") or device.get("type") or "GPU")
+                    comfy_vram_total = int(device.get("vram_total") or 0)
+    except Exception:
+        pass
+    return {"status": "ok", "ollama": ollama, "ollama_gpu_vram_bytes": ollama_vram, "comfyui": comfyui, "comfy_device": comfy_device, "comfy_vram_total_bytes": comfy_vram_total, "ffmpeg_encoder": await detect_encoder(), "storage": str(settings.storage_path.resolve())}
 
 @app.get("/api/voices")
 async def voices():
