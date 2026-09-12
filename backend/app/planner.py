@@ -7,7 +7,7 @@ from .assets import load_assets, recognized_names
 from .config import settings
 from .models import ProjectCreate, Scene
 
-MASTER_NEGATIVE = "ugly, deformed, mutated, extra limbs, bad anatomy, duplicate character, wrong character, wrong clothing, text, watermark, signature, scary, aggressive, hyper-saturated, neon colors, glowing eyes, blurry, low quality, jpeg artifacts"
+MASTER_NEGATIVE = "ugly, deformed, mutated, extra limbs, bad anatomy, duplicate character, wrong character, wrong clothing, text, watermark, signature, scary, aggressive, hyper-saturated, neon colors, glowing eyes, blurry, low quality, low resolution, jpeg artifacts, flat lighting, random unrelated person, wrong environment, old church art, statue, icon, manuscript"
 PRONOUN_PATTERN = re.compile(r"\b(he|she|they|him|her|them|his|hers|their|ele|ela|eles|elas|dele|dela|deles|delas)\b", re.I)
 
 def segment_script(script: str, target_words: int = 28, max_words: int = 40) -> list[str]:
@@ -51,10 +51,10 @@ async def _annotate(segments: list[str], language: str):
         "stream": False,
         "format": "json",
         "messages": [
-            {"role": "system", "content": "You are the scene director for Bramble & Grace, a calm low-stimulation 3D claymation children's series. Analyze each narration segment but never rewrite, translate, shorten, expand, or reorder it. Return JSON only with key scenes. For each scene return scene_number, characters using only names from the asset catalog, location, emotion, action, and visual_description. Preserve continuity from one scene to the next when pronouns refer to a character or the location has not changed. Keep movement gentle, child-safe, visually simple, and use no more than three active characters unless required."},
+            {"role": "system", "content": "You are the cinematic scene director for Bramble & Grace, a calm low-stimulation premium 3D animated children's series. Analyze every narration segment literally and visually. Never rewrite, translate, shorten, expand, or reorder narration. Return JSON only with key scenes. For each scene return scene_number, characters using only names from the asset catalog, location, emotion, action, and visual_description. The image MUST depict what the narration is saying at that exact moment. Do not insert a random character into environment-only narration. Preserve character identity, clothing, colors and continuity. Use child-safe cinematic lighting, depth of field, expressive but gentle facial emotion, high-detail environments, natural composition, and no more than three active characters unless required."},
             {"role": "user", "content": json.dumps({"language": language, "assets": _catalog(), "segments": [{"scene_number": i + 1, "narration": s} for i, s in enumerate(segments)]}, ensure_ascii=False)}
         ],
-        "options": {"temperature": 0.15}
+        "options": {"temperature": 0.12}
     }
     async with httpx.AsyncClient(timeout=180) as client:
         response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/chat", json=body)
@@ -67,16 +67,29 @@ def _traits(names: list[str]) -> str:
     return "; ".join(f"{by_name[n.lower()].name}: {by_name[n.lower()].traits or by_name[n.lower()].description}" for n in names if n.lower() in by_name)
 
 def build_prompt(scene: Scene) -> str:
-    parts = [settings.default_style, "Bramble & Grace series, consistent approved character designs", "low-stimulation children's scene", "soft natural color palette", "gentle cinematic composition", "subtle facial expression matching the narration"]
+    parts = [
+        settings.default_style,
+        "Bramble & Grace premium cinematic 3D animated film frame",
+        "high resolution, ultra detailed, polished feature-film quality",
+        "physically believable soft lighting, global illumination, volumetric sunlight when appropriate",
+        "cinematic depth of field, natural lens perspective, detailed textures",
+        "consistent approved character designs and exact facial identity from references",
+        "low-stimulation children's scene, soft natural color palette",
+        "composition and environment must match the narration literally",
+        "subtle facial expression matching the narration",
+    ]
     if scene.characters:
         parts.append(_traits(scene.characters))
+    else:
+        parts.append("environment-focused composition, no people or characters unless the narration clearly requires them")
     if scene.location:
         parts.append(_traits([scene.location]))
+        parts.append(f"Location: {scene.location}")
     if scene.action:
-        parts.append(f"Action: {scene.action}")
+        parts.append(f"Exact visual action from narration: {scene.action}")
     if scene.emotion:
-        parts.append(f"Emotion: {scene.emotion}")
-    parts.append("no written words in image")
+        parts.append(f"Emotion and mood: {scene.emotion}")
+    parts.append("no written words, logos, captions or watermarks in image")
     return ", ".join(x for x in parts if x)
 
 async def plan_scenes(request: ProjectCreate) -> list[Scene]:
@@ -108,7 +121,8 @@ async def plan_scenes(request: ProjectCreate) -> list[Scene]:
             location = explicit_locations[0] if explicit_locations else previous_location
         if not explicit_locations and not meta.get("location"):
             location = previous_location
-        scene = Scene(scene_number=i, narration=narration, characters=chars, location=location, emotion=str(meta.get("emotion") or fallback["emotion"])[:80], action=str(meta.get("action") or meta.get("visual_description") or fallback["action"])[:600], negative_prompt=MASTER_NEGATIVE)
+        action = str(meta.get("visual_description") or meta.get("action") or fallback["action"])[:700]
+        scene = Scene(scene_number=i, narration=narration, characters=chars, location=location, emotion=str(meta.get("emotion") or fallback["emotion"])[:80], action=action, negative_prompt=MASTER_NEGATIVE)
         scene.image_prompt = build_prompt(scene)
         scenes.append(scene)
         if chars:
