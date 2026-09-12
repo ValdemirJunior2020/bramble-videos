@@ -1,14 +1,16 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Bramble Videos - Install
 
 set "LOG=%~dp0install.log"
+if exist ".bramble-installed" del /q ".bramble-installed" >nul 2>nul
 
 echo ============================================================
 echo BRAMBLE VIDEOS - LOCAL INSTALLER
 echo ============================================================
 echo Install started %date% %time% > "%LOG%"
+echo Folder: %CD% >> "%LOG%"
 
 echo [1/7] Checking required programs...
 where python >nul 2>nul
@@ -24,10 +26,13 @@ if errorlevel 1 goto :missing_ffprobe
 
 echo [OK] Python
 python --version
+python --version >> "%LOG%" 2>&1
 echo [OK] Node
 node --version
+node --version >> "%LOG%" 2>&1
 echo [OK] npm
 call npm --version
+call npm --version >> "%LOG%" 2>&1
 echo [OK] FFmpeg
 ffmpeg -version | findstr /b "ffmpeg version"
 
@@ -44,32 +49,43 @@ echo.
 echo [3/7] Preparing backend Python environment...
 if exist "backend\.venv" if not exist "backend\.venv\Scripts\python.exe" (
   echo [WARN] Broken backend virtual environment found. Rebuilding it...
+  echo Removing broken backend\.venv >> "%LOG%"
   rmdir /s /q "backend\.venv"
 )
 
 if not exist "backend\.venv\Scripts\python.exe" (
   echo Creating backend virtual environment...
   python -m venv "backend\.venv" >> "%LOG%" 2>&1
-  if errorlevel 1 goto :fail
+  if errorlevel 1 (
+    echo [ERROR] Python failed to create backend\.venv.
+    goto :fail
+  )
 ) else (
   echo [SKIP] Backend virtual environment already exists
 )
 
 if not exist "backend\.venv\Scripts\python.exe" (
-  echo [ERROR] Python virtual environment was not created correctly.
+  echo [ERROR] backend\.venv\Scripts\python.exe is still missing.
   goto :fail
 )
+echo [OK] Backend Python created
 
 echo.
 echo [4/7] Installing backend packages...
-"backend\.venv\Scripts\python.exe" -m pip install --upgrade pip
-if errorlevel 1 goto :fail
-"backend\.venv\Scripts\python.exe" -m pip install -r "backend\requirements.txt"
-if errorlevel 1 goto :fail
-
-"backend\.venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, pydantic, PIL" >nul 2>nul
+"backend\.venv\Scripts\python.exe" -m pip install --upgrade pip >> "%LOG%" 2>&1
 if errorlevel 1 (
-  echo [ERROR] Backend package verification failed.
+  echo [ERROR] pip upgrade failed. See install.log.
+  goto :fail
+)
+"backend\.venv\Scripts\python.exe" -m pip install -r "backend\requirements.txt" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [ERROR] Backend package install failed. See install.log.
+  goto :fail
+)
+
+"backend\.venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, pydantic, PIL" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [ERROR] Backend package verification failed. See install.log.
   goto :fail
 )
 echo [OK] Backend packages verified
@@ -84,10 +100,14 @@ if exist "frontend\node_modules\.bin\vite.cmd" (
     rmdir /s /q "frontend\node_modules"
   )
   pushd "frontend"
-  call npm install
-  set "NPM_RESULT=%ERRORLEVEL%"
+  echo Running npm install. This can take a few minutes...
+  call npm install >> "%LOG%" 2>&1
+  set "NPM_RESULT=!ERRORLEVEL!"
   popd
-  if not "%NPM_RESULT%"=="0" goto :fail
+  if not "!NPM_RESULT!"=="0" (
+    echo [ERROR] npm install failed. See install.log.
+    goto :fail
+  )
 )
 
 if not exist "frontend\node_modules\.bin\vite.cmd" (
@@ -128,9 +148,9 @@ if errorlevel 1 (
 
 echo.
 echo [7/7] Running code validation...
-call TEST.bat /quiet
+call TEST.bat /quiet >> "%LOG%" 2>&1
 if errorlevel 1 (
-  echo [ERROR] Validation failed. Installation is not being marked complete.
+  echo [ERROR] Validation failed. See install.log.
   goto :fail
 )
 
@@ -143,6 +163,10 @@ echo.
 echo ============================================================
 echo INSTALL COMPLETE - EVERYTHING VERIFIED
 echo ============================================================
+echo Backend Python : FOUND
+echo Frontend Vite  : FOUND
+echo Marker         : .bramble-installed
+echo.
 echo Double-click START.bat.
 echo.
 pause
@@ -154,13 +178,15 @@ echo ============================================================
 echo [ERROR] INSTALLATION FAILED
 echo ============================================================
 echo The installation was NOT marked complete.
-echo Check the error above and install.log if needed.
+echo Open this file for the real error:
+echo %LOG%
 if exist ".bramble-installed" del /q ".bramble-installed" >nul 2>nul
 pause
 exit /b 1
 
 :missing_python
 echo [ERROR] Python was not found in PATH.
+echo Install Python and make sure "Add Python to PATH" is enabled.
 pause
 exit /b 1
 :missing_node
