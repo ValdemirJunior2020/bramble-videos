@@ -9,16 +9,16 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from .assets import add_reference, delete_asset, load_assets
+from .assets import add_reference, delete_asset, load_assets, update_voice_profile
 from .audio import list_sapi_voices
 from .comfy import generate_scene_image
 from .config import settings
-from .models import Project, ProjectCreate, RenderRequest, SceneUpdate
+from .models import AssetVoiceUpdate, Project, ProjectCreate, RenderRequest, SceneUpdate
 from .pipeline import load_project, project_dir, save_project, start_render
 from .planner import plan_scenes, build_prompt
 from .video import detect_encoder
 
-app = FastAPI(title="Bramble Videos", version="1.1.1")
+app = FastAPI(title="Bramble Videos", version="1.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
@@ -79,6 +79,16 @@ async def upload_asset(name: str = Form(...), asset_type: str = Form(...), alias
         return (await add_reference(name, asset_type, file, aliases, description, traits)).model_dump()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+@app.patch("/api/assets/{asset_id}/voice")
+def set_asset_voice(asset_id: str, update: AssetVoiceUpdate):
+    try:
+        asset = update_voice_profile(asset_id, update)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not asset:
+        raise HTTPException(404, "Character not found")
+    return asset.model_dump()
 
 @app.delete("/api/assets/{asset_id}")
 def remove_asset(asset_id: str):
@@ -181,11 +191,6 @@ def scene_image(project_id: str, scene_number: int):
 
 @app.post("/api/projects/{project_id}/render")
 async def render(project_id: str, request: RenderRequest):
-    """Start the background render while still inside FastAPI's active event loop.
-
-    This endpoint MUST stay async. A normal `def` route runs in FastAPI's worker
-    thread pool, where asyncio.create_task() has no running event loop.
-    """
     try:
         load_project(project_id)
         start_render(project_id, request.regenerate_all_images)
