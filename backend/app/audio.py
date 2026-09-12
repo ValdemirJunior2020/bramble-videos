@@ -22,7 +22,7 @@ async def _run(cmd: list[str]) -> tuple[str, str]:
     return out.decode(errors="ignore"), err.decode(errors="ignore")
 
 async def list_sapi_voices() -> list[VoiceInfo]:
-    script = "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.GetInstalledVoices() | ForEach-Object { $i=$_.VoiceInfo; Write-Output ($i.Name+'|'+$i.Culture.Name+'|'+$i.Gender) }"
+    script = "Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.GetInstalledVoices() | ForEach-Object { $i=$_.VoiceInfo; Write-Output ($i.Name+'|'+$i.Culture.Name+'|'+$i.Gender) }"
     try:
         out, _ = await _run(["powershell", "-NoProfile", "-Command", script])
     except Exception:
@@ -62,7 +62,7 @@ async def _sapi(text: str, language: str, voice: str, output: Path) -> None:
     txt = _ps_escape(text)
     requested = _ps_escape(voice)
     culture = "pt-BR" if language == "pt-BR" else "en-US"
-    script = f"$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices=$s.GetInstalledVoices() | ForEach-Object {{$_.VoiceInfo}}; $v=$null; if ('{requested}' -ne '') {{$v=$voices | Where-Object {{$_.Name -eq '{requested}'}} | Select-Object -First 1}}; if ($null -eq $v) {{$v=$voices | Where-Object {{$_.Culture.Name -eq '{culture}'}} | Select-Object -First 1}}; if ($null -eq $v) {{ throw 'No installed Windows voice matches {culture}. Choose or install a local voice for this language.' }}; $s.SelectVoice($v.Name); $s.Rate=-1; $s.SetOutputToWaveFile('{target}'); $s.Speak('{txt}'); $s.Dispose()"
+    script = f"Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices=$s.GetInstalledVoices() | ForEach-Object {{$_.VoiceInfo}}; $v=$null; if ('{requested}' -ne '') {{$v=$voices | Where-Object {{$_.Name -eq '{requested}'}} | Select-Object -First 1}}; if ($null -eq $v) {{$v=$voices | Where-Object {{$_.Culture.Name -eq '{culture}'}} | Select-Object -First 1}}; if ($null -eq $v) {{ throw 'No installed Windows voice matches {culture}. Choose or install a local voice for this language.' }}; $s.SelectVoice($v.Name); $s.Rate=-1; $s.SetOutputToWaveFile('{target}'); $s.Speak('{txt}'); $s.Dispose()"
     await _run(["powershell", "-NoProfile", "-Command", script])
 
 async def _chatterbox(text: str, style: str, output: Path) -> None:
@@ -95,13 +95,20 @@ async def make_silence(path: Path, seconds: float = 0.12) -> None:
 
 def _srt_time(seconds: float) -> str:
     ms = max(0, round(seconds * 1000))
-    h, rem = divmod(ms, 3_600_000); m, rem = divmod(rem, 60_000); s, milli = divmod(rem, 1000)
+    h, rem = divmod(ms, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    s, milli = divmod(rem, 1000)
     return f"{h:02}:{m:02}:{s:02},{milli:03}"
 
 async def build_narration_and_subtitles(scenes, language: str, voice: str, style: str, workdir: Path):
-    audio_dir = workdir / "audio_parts"; audio_dir.mkdir(parents=True, exist_ok=True)
-    silence = audio_dir / "silence.wav"; await make_silence(silence)
-    concat_entries: list[Path] = []; subtitle_entries: list[dict] = []; cursor = 0.0; index = 0
+    audio_dir = workdir / "audio_parts"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    silence = audio_dir / "silence.wav"
+    await make_silence(silence)
+    concat_entries: list[Path] = []
+    subtitle_entries: list[dict] = []
+    cursor = 0.0
+    index = 0
     for scene in scenes:
         scene_start = cursor
         for phrase in split_phrases(scene.narration):
@@ -110,8 +117,13 @@ async def build_narration_and_subtitles(scenes, language: str, voice: str, style
             await synthesize_phrase(phrase, language, voice, style, part)
             seconds = await duration(part)
             subtitle_entries.append({"index": index, "scene_number": scene.scene_number, "text": phrase, "start": cursor, "end": cursor + seconds})
-            concat_entries.append(part); cursor += seconds; concat_entries.append(silence); cursor += 0.12
-        scene.start_seconds = scene_start; scene.end_seconds = cursor; scene.duration_seconds = max(0.1, cursor - scene_start)
+            concat_entries.append(part)
+            cursor += seconds
+            concat_entries.append(silence)
+            cursor += 0.12
+        scene.start_seconds = scene_start
+        scene.end_seconds = cursor
+        scene.duration_seconds = max(0.1, cursor - scene_start)
     concat_file = audio_dir / "concat.txt"
     concat_file.write_text("\n".join(f"file '{p.resolve().as_posix()}'" for p in concat_entries), encoding="utf-8")
     narration = workdir / "narration.wav"
