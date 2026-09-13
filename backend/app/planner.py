@@ -10,7 +10,9 @@ from .config import settings
 from .models import ProjectCreate, Scene
 
 MASTER_NEGATIVE = (
-    "ugly, deformed, mutated, extra limbs, bad anatomy, duplicate character, wrong character, "
+    "ugly, deformed, mutated, extra limbs, missing limbs, floating limbs, disconnected body, disconnected torso, "
+    "severed body, body cut in half, split body, duplicated torso, duplicated head, two heads, extra head, "
+    "multiple bodies for same character, malformed body, bad anatomy, duplicate character, wrong character, "
     "wrong clothing, swapped clothing, mixed clothing, fused character, merged character, face blend, face swap, "
     "hybrid creature, mixed species, human-animal hybrid, animal ears on human, animal tail on human, animal fur on human, "
     "rabbit ears on girl, squirrel ears on girl, owl features on girl, bear features on girl, turtle features on girl, "
@@ -42,7 +44,7 @@ CANONICAL_LOCKS = {
         "Her locked default outfit is blue denim overalls over a light blue short-sleeve shirt. She must never have animal ears, tail, whiskers, muzzle, fur, beak, shell, or any non-human features."
     ),
     "Pip": (
-        "Pip is a small orange-red squirrel only. He has squirrel ears, squirrel muzzle, whiskers, orange fur, and a fluffy tail. "
+        "Pip is a small orange-red squirrel only. He has squirrel ears, squirrel muzzle, whiskers, orange fur, and one fluffy squirrel tail. "
         "His locked default outfit is a muted green aviator hat and muted green outfit. He must never become a human child and must never borrow Grace's face, hair, or clothing."
     ),
     "Bramble": (
@@ -135,9 +137,13 @@ async def _annotate(segments: list[str], language: str):
                     "Analyze every narration segment literally and visually. Never rewrite, translate, shorten, expand, or reorder narration. "
                     "Return JSON only with key scenes. For each scene return scene_number, characters using only names from the asset catalog, "
                     "location, emotion, action, and visual_description. The image MUST depict what the narration is saying at that exact moment. "
+                    "GRAMMAR IS CRITICAL: bind every adjective and size word to the noun it actually modifies. If narration says 'a tall gate', the GATE is tall, never the character. "
+                    "If narration says a small flower, huge tree, rusty gate, long path, dark cave, or wide stream, those properties belong only to that object or location. "
+                    "Never transfer an object's height, size, color, age, texture, shape, or condition onto a character. "
                     "Do not insert extra characters into object-focused or environment-focused narration. Only keep characters that are actively visible or necessary. "
                     "If a segment mainly describes an object or location, prefer zero characters unless the narration explicitly shows a watcher in frame. "
-                    "Preserve character identity, species, clothing, colors, and continuity. Avoid more than two active characters unless clearly required by the narration."
+                    "Preserve character identity, species, clothing, colors, normal proportions, and continuity. Every character has one intact coherent body. "
+                    "Avoid more than two active characters unless clearly required by the narration."
                 ),
             },
             {
@@ -152,7 +158,7 @@ async def _annotate(segments: list[str], language: str):
                 ),
             },
         ],
-        "options": {"temperature": 0.08},
+        "options": {"temperature": 0.05},
     }
     async with httpx.AsyncClient(timeout=180) as client:
         response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/chat", json=body)
@@ -189,6 +195,11 @@ def build_prompt(scene: Scene) -> str:
     parts = [
         f"PRIMARY REQUIRED SHOT — depict this exact visible moment and make it the dominant composition: {primary_action}",
         f"Scene narration to match literally: {scene.narration}",
+        (
+            "STRICT ATTRIBUTE BINDING: adjectives and size words belong only to the noun they describe. "
+            "A tall gate means the gate is tall; a large tree means the tree is large; a tiny flower means the flower is tiny. "
+            "Never make a character taller, shorter, wider, older, rusted, overgrown, colored, or reshaped because an object or location has that description."
+        ),
     ]
     if scene.characters:
         parts.append(f"Only these characters may appear prominently: {', '.join(scene.characters)}")
@@ -196,6 +207,10 @@ def build_prompt(scene: Scene) -> str:
         rules = _canonical_rules(scene.characters)
         if rules:
             parts.append(rules)
+        parts.append(
+            "ANATOMY LOCK: render exactly one intact coherent body for each named character, with one head attached to one torso and all limbs naturally connected. "
+            "Never split a character into upper/lower pieces, never duplicate a torso or head, and never show floating or disconnected body parts."
+        )
         parts.append(
             "Never merge characters. Never swap clothing. Never give one character another character's face, hair, fur, body, species traits, or outfit. "
             "Each named character must stay visually separate, recognizable, and in their correct approved clothing."
