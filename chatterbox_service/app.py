@@ -16,9 +16,11 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from chatterbox.tts import ChatterboxTTS
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
-app = FastAPI(title="Bramble Chatterbox Service", version="1.0.0")
-_model: ChatterboxTTS | None = None
+app = FastAPI(title="Bramble Chatterbox Service", version="1.1.0")
+_english_model: ChatterboxTTS | None = None
+_multilingual_model: ChatterboxMultilingualTTS | None = None
 _model_lock = threading.Lock()
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ EMOTION_PROFILES: dict[str, EmotionProfile] = {
 class SynthesizeRequest(BaseModel):
     text: str = Field(min_length=1)
     style: str = "Warm"
+    language: str = "en"
     exaggeration: float | None = None
     cfg_weight: float | None = None
     temperature: float | None = None
@@ -58,12 +61,23 @@ def _device() -> str:
         raise RuntimeError("TTS_DEVICE=cuda requested but PyTorch cannot see CUDA")
     return requested
 
-def _get_model() -> ChatterboxTTS:
-    global _model
+def _language_id(language: str) -> str:
+    value = (language or "en").strip().lower()
+    if value in {"pt-br", "pt_br", "pt"}:
+        return "pt"
+    return "en"
+
+def _get_model(language: str):
+    global _english_model, _multilingual_model
+    lang = _language_id(language)
     with _model_lock:
-        if _model is None:
-            _model = ChatterboxTTS.from_pretrained(device=_device())
-        return _model
+        if lang == "en":
+            if _english_model is None:
+                _english_model = ChatterboxTTS.from_pretrained(device=_device())
+            return _english_model, "en"
+        if _multilingual_model is None:
+            _multilingual_model = ChatterboxMultilingualTTS.from_pretrained(device=_device(), t3_model="v3")
+        return _multilingual_model, lang
 
 def _segments(text: str, max_words: int = 34) -> list[str]:
     normalized = re.sub(r"\s+", " ", text.strip())
@@ -107,9 +121,9 @@ def _wav_bytes(data: np.ndarray, sample_rate: int) -> bytes:
         wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sample_rate); wf.writeframes(pcm.tobytes())
     return buffer.getvalue()
 
-def _synthesize_sync(text: str, style: str, reference_path: str | None = None, overrides: dict | None = None) -> tuple[bytes, str]:
+def _synthesize_sync(text: str, style: str, language: str = "en", reference_path: str | None = None, overrides: dict | None = None) -> tuple[bytes, str]:
     key, profile = _profile(style)
-    model = _get_model()
+    model, language_id = _get_model(language)
     segments = _segments(text)
     audio_parts: list[np.ndarray] = []
     for i, segment in enumerate(segments):
@@ -118,7 +132,10 @@ def _synthesize_sync(text: str, style: str, reference_path: str | None = None, o
             "cfg_weight": float((overrides or {}).get("cfg_weight") or profile.cfg_weight),
             "temperature": float((overrides or {}).get("temperature") or profile.temperature),
         }
-        if reference_path: kwargs["audio_prompt_path"] = reference_path
+        if reference_path:
+            kwargs["audio_prompt_path"] = reference_path
+        if language_id != "en":
+            kwargs["language_id"] = language_id
         wav = model.generate(segment, **kwargs)
         audio_parts.append(_tensor_to_mono_numpy(wav))
         if i < len(segments) - 1:
@@ -128,7 +145,13 @@ def _synthesize_sync(text: str, style: str, reference_path: str | None = None, o
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "device": _device(), "model_loaded": _model is not None}
+    return {
+        "status": "ok",
+        "device": _device(),
+        "english_model_loaded": _english_model is not None,
+        "multilingual_model_loaded": _multilingual_model is not None,
+        "languages": ["en", "pt-BR"],
+    }
 
 @app.get("/profiles")
 def profiles() -> dict:
@@ -137,13 +160,28 @@ def profiles() -> dict:
 @app.post("/synthesize")
 async def synthesize(request: SynthesizeRequest):
     try:
-        audio, key = await asyncio.to_thread(_synthesize_sync, request.text, request.style, None, request.model_dump(exclude_none=True))
+        audio, key = await asyncio.to_thread(
+            _synthesize_sync,
+            request.text,
+            request.style,
+            request.language,
+            None,
+            request.model_dump(exclude_none=True),
+        )
     except Exception as exc:
         raise HTTPException(500, str(exc))
     return Response(content=audio, media_type="audio/wav", headers={"x-tts-engine":"chatterbox","x-tts-profile":key})
 
 @app.post("/synthesize-upload")
-async def synthesize_upload(text: str = Form(...), style: str = Form("Warm"), reference: UploadFile = File(...), exaggeration: float | None = Form(None), cfg_weight: float | None = Form(None), temperature: float | None = Form(None)):
+async def synthesize_upload(
+    text: str = Form(...),
+    style: str = Form("Warm"),
+    language: str = Form("en"),
+    reference: UploadFile = File(...),
+    exaggeration: float | None = Form(None),
+    cfg_weight: float | None = Form(None),
+    temperature: float | None = Form(None),
+):
     suffix = Path(reference.filename or "reference.wav").suffix.lower()
     if suffix not in {".wav", ".mp3", ".flac", ".m4a", ".ogg"}:
         raise HTTPException(400, "Unsupported reference audio type")
@@ -151,7 +189,14 @@ async def synthesize_upload(text: str = Form(...), style: str = Form("Warm"), re
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await reference.read()); temp_path = tmp.name
-        audio, key = await asyncio.to_thread(_synthesize_sync, text, style, temp_path, {"exaggeration":exaggeration,"cfg_weight":cfg_weight,"temperature":temperature})
+        audio, key = await asyncio.to_thread(
+            _synthesize_sync,
+            text,
+            style,
+            language,
+            temp_path,
+            {"exaggeration":exaggeration,"cfg_weight":cfg_weight,"temperature":temperature},
+        )
     except Exception as exc:
         raise HTTPException(500, str(exc))
     finally:
