@@ -60,6 +60,7 @@ class ProjectCreate(BaseModel):
     custom_height: int | None = Field(default=None, ge=256, le=4096)
     voice: str = ""
     narration_style: NarrationStyle = "Warm"
+    narrator_speed: float = Field(default=0.90, ge=0.70, le=1.20)
     reference_voice_path: str | None = None
     consistency_lock: bool = True
     generate_images: bool = True
@@ -103,6 +104,7 @@ class Project(BaseModel):
     custom_height: int | None = None
     voice: str = ""
     narration_style: NarrationStyle = "Warm"
+    narrator_speed: float = Field(default=0.90, ge=0.70, le=1.20)
     reference_voice_path: str | None = None
     consistency_lock: bool = True
     generate_images: bool = True
