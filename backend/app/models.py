@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 AssetType = Literal["character", "location", "prop", "group"]
 Language = Literal["en", "pt-BR"]
 Aspect = Literal["16:9", "9:16", "1:1", "4:5", "custom"]
+ProjectMode = Literal["bramble", "bible", "general", "custom"]
 NarrationStyle = Literal["Calm", "Documentary", "Warm", "Inspirational", "Emotional", "Dramatic", "Sermon"]
 SubtitlePosition = Literal["top", "middle", "bottom"]
 WatermarkPosition = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
@@ -38,6 +39,7 @@ class AssetVoiceUpdate(BaseModel):
 class Scene(BaseModel):
     scene_number: int = Field(ge=1)
     narration: str = Field(min_length=1)
+    project_mode: ProjectMode = "bramble"
     section_type: SceneSection = "story"
     section_label: str = ""
     characters: list[str] = Field(default_factory=list)
@@ -54,6 +56,7 @@ class Scene(BaseModel):
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=180)
     script: str = Field(min_length=1)
+    project_mode: ProjectMode = "bramble"
     language: Language = "en"
     aspect: Aspect = "16:9"
     custom_width: int | None = Field(default=None, ge=256, le=4096)
@@ -98,6 +101,7 @@ class Project(BaseModel):
     id: str
     title: str
     script: str
+    project_mode: ProjectMode = "bramble"
     language: Language
     aspect: Aspect
     custom_width: int | None = None
