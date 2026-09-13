@@ -23,39 +23,11 @@ EMOTION_PROFILES: dict[str, dict[str, float]] = {
     "sermon": {"exaggeration": 0.88, "cfg_weight": 0.25, "temperature": 0.82},
 }
 
-STYLE_RATE = {
-    "calm": -2,
-    "documentary": -1,
-    "warm": -1,
-    "inspirational": 0,
-    "emotional": -1,
-    "dramatic": 0,
-    "sermon": -2,
-}
-PIPER_STYLE_SPEED = {
-    "calm": 0.93,
-    "documentary": 0.97,
-    "warm": 0.96,
-    "inspirational": 1.00,
-    "emotional": 0.94,
-    "dramatic": 0.91,
-    "sermon": 0.90,
-}
+STYLE_RATE = {"calm": -2, "documentary": -1, "warm": -1, "inspirational": 0, "emotional": -1, "dramatic": 0, "sermon": -2}
+PIPER_STYLE_SPEED = {"calm": 0.93, "documentary": 0.97, "warm": 0.96, "inspirational": 1.00, "emotional": 0.94, "dramatic": 0.91, "sermon": 0.90}
 REFLECTION_AUDIO = {
-    "heart_lesson": {
-        "style": "Warm",
-        "speed": 0.90,
-        "volume": 0.94,
-        "pause_before": 0.65,
-        "pause_after": 0.28,
-    },
-    "parents": {
-        "style": "Calm",
-        "speed": 0.84,
-        "volume": 0.90,
-        "pause_before": 1.00,
-        "pause_after": 0.38,
-    },
+    "heart_lesson": {"style": "Warm", "speed": 0.90, "volume": 0.94, "pause_before": 0.65, "pause_after": 0.28},
+    "parents": {"style": "Calm", "speed": 0.84, "volume": 0.90, "pause_before": 1.00, "pause_after": 0.38},
 }
 SPEECH_VERBS = "said|asked|replied|answered|whispered|shouted|cried|called|squeaked|murmured|laughed|exclaimed|yelled|spoke"
 QUOTE_PATTERN = re.compile(r'[“\"]([^”\"]+)[”\"]')
@@ -112,14 +84,12 @@ def _speaker_from_context(prefix: str, suffix: str, scene_characters: list[str])
             return name
         if re.search(rf"(?:{SPEECH_VERBS})\s+\b{escaped}\b", suffix, re.I):
             return name
-    nearest = ""
-    nearest_pos = -1
+    nearest, nearest_pos = "", -1
     low = prefix.lower()
     for name in candidates:
         pos = low.rfind(name.lower())
         if pos > nearest_pos:
-            nearest = name
-            nearest_pos = pos
+            nearest, nearest_pos = name, pos
     if nearest:
         return nearest
     if len(candidates) == 1:
@@ -149,16 +119,13 @@ def split_voice_chunks(text: str, scene_characters: list[str]) -> list[tuple[str
                 if body:
                     chunks.append((canonical, body))
             return chunks
-
     chunks: list[tuple[str, str]] = []
     cursor = 0
     for match in QUOTE_PATTERN.finditer(normalized):
         before = normalized[cursor:match.start()].strip()
         if before:
             chunks.append(("Narrator", before))
-        prefix = normalized[:match.start()]
-        suffix = normalized[match.end():match.end() + 120]
-        speaker = _speaker_from_context(prefix, suffix, names)
+        speaker = _speaker_from_context(normalized[:match.start()], normalized[match.end():match.end() + 120], names)
         dialogue = match.group(1).strip()
         if dialogue:
             chunks.append((speaker, dialogue))
@@ -172,8 +139,7 @@ def split_voice_chunks(text: str, scene_characters: list[str]) -> list[tuple[str
 async def _chatterbox_available() -> bool:
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            response = await client.get(f"{settings.chatterbox_url.rstrip('/')}/health")
-            return response.status_code == 200
+            return (await client.get(f"{settings.chatterbox_url.rstrip('/')}/health")).status_code == 200
     except Exception:
         return False
 
@@ -201,28 +167,25 @@ def _piper_executable() -> str:
     raise RuntimeError("Brazilian Portuguese voice engine is missing. Run INSTALL.bat again to install Piper TTS.")
 
 
+def _piper_model_paths() -> tuple[Path, Path]:
+    voice_dir = settings.storage_path / "voices" / "piper"
+    model = voice_dir / "pt_BR-faber-medium.onnx"
+    config = voice_dir / "pt_BR-faber-medium.onnx.json"
+    if not model.exists() or not config.exists():
+        raise RuntimeError("Brazilian Portuguese voice files are missing. Run INSTALL.bat again.")
+    return model, config
+
+
 async def _piper_ptbr(text: str, style: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    voice_dir = settings.storage_path / "voices" / "piper"
-    voice_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        _piper_executable(),
-        "--model", "pt_BR-faber-medium",
-        "--data-dir", str(voice_dir),
-        "--download-dir", str(voice_dir),
-        "--output_file", str(output),
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    model, config = _piper_model_paths()
+    cmd = [_piper_executable(), "--model", str(model), "--config", str(config), "--output_file", str(output)]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate(text.encode("utf-8"))
     if proc.returncode != 0:
         raise RuntimeError((err or out).decode(errors="ignore")[-3000:])
-    if not output.exists():
-        raise RuntimeError("Piper Brazilian Portuguese voice did not create audio")
+    if not output.exists() or output.stat().st_size < 1000:
+        raise RuntimeError("Brazilian Portuguese voice did not create valid audio")
 
 
 async def _chatterbox(text: str, language: str, style: str, output: Path, reference_voice: Path | None = None) -> None:
@@ -231,36 +194,14 @@ async def _chatterbox(text: str, language: str, style: str, output: Path, refere
     async with httpx.AsyncClient(timeout=None) as client:
         if reference_voice and reference_voice.exists():
             with reference_voice.open("rb") as handle:
-                response = await client.post(
-                    f"{base}/synthesize-upload",
-                    data={
-                        "text": text,
-                        "language": language,
-                        "style": style,
-                        "exaggeration": str(profile["exaggeration"]),
-                        "cfg_weight": str(0.0 if language == "pt-BR" else profile["cfg_weight"]),
-                        "temperature": str(profile["temperature"]),
-                    },
-                    files={"reference": (reference_voice.name, handle, "audio/wav")},
-                )
+                response = await client.post(f"{base}/synthesize-upload", data={"text": text, "language": language, "style": style, "exaggeration": str(profile["exaggeration"]), "cfg_weight": str(profile["cfg_weight"]), "temperature": str(profile["temperature"])}, files={"reference": (reference_voice.name, handle, "audio/wav")})
         else:
-            response = await client.post(
-                f"{base}/synthesize",
-                json={
-                    "text": text,
-                    "language": language,
-                    "style": style,
-                    "exaggeration": profile["exaggeration"],
-                    "cfg_weight": profile["cfg_weight"],
-                    "temperature": profile["temperature"],
-                },
-            )
+            response = await client.post(f"{base}/synthesize", json={"text": text, "language": language, "style": style, "exaggeration": profile["exaggeration"], "cfg_weight": profile["cfg_weight"], "temperature": profile["temperature"]})
         response.raise_for_status()
         output.write_bytes(response.content)
 
 
 async def normalize_wav(source: Path, target: Path, speed: float = 1.0, volume: float = 1.0) -> None:
-    filters: list[str] = []
     chain: list[str] = []
     speed = max(0.5, min(2.0, speed))
     volume = max(0.1, min(3.0, volume))
@@ -268,29 +209,21 @@ async def normalize_wav(source: Path, target: Path, speed: float = 1.0, volume: 
         chain.append(f"atempo={speed:.4f}")
     if abs(volume - 1.0) > 0.001:
         chain.append(f"volume={volume:.3f}")
-    if chain:
-        filters = ["-filter:a", ",".join(chain)]
+    filters = ["-filter:a", ",".join(chain)] if chain else []
     await _run(["ffmpeg", "-y", "-i", str(source), *filters, "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(target)])
 
 
-async def synthesize_phrase(
-    text: str,
-    language: str,
-    voice: str,
-    style: str,
-    output: Path,
-    reference_voice_path: str | None = None,
-    speed: float = 1.0,
-    volume: float = 1.0,
-) -> None:
+async def synthesize_phrase(text: str, language: str, voice: str, style: str, output: Path, reference_voice_path: str | None = None, speed: float = 1.0, volume: float = 1.0) -> None:
     raw = output.with_name(output.stem + "-raw.wav")
     reference = Path(reference_voice_path) if reference_voice_path else None
     chatterbox_available = await _chatterbox_available()
 
     if language == "pt-BR":
-        if reference and reference.exists() and chatterbox_available:
-            await _chatterbox(text, language, style, raw, reference)
-        elif voice and voice not in {"__chatterbox__", "__piper_ptbr__"}:
+        # Reliability rule: Brazilian Portuguese is rendered through the dedicated
+        # pt_BR Piper model. Chatterbox/reference cloning caused Spanish/European-
+        # Portuguese drift and sometimes unintelligible output on this pipeline.
+        # An explicitly selected installed Windows pt-BR voice may still be used.
+        if voice and voice not in {"__chatterbox__", "__piper_ptbr__"}:
             try:
                 await _sapi(text, language, voice, style, raw)
             except Exception:
@@ -322,161 +255,62 @@ async def synthesize_phrase(
 
 
 async def duration(path: Path) -> float:
-    out, _ = await _run([
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", str(path),
-    ])
+    out, _ = await _run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)])
     return float(out.strip())
 
 
 async def make_silence(path: Path, seconds: float = 0.12) -> None:
-    await _run([
-        "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
-        "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(path),
-    ])
+    await _run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(path)])
 
 
 def _srt_time(seconds: float) -> str:
-    ms = max(0, round(seconds * 1000))
-    h, rem = divmod(ms, 3_600_000)
-    m, rem = divmod(rem, 60_000)
-    s, milli = divmod(rem, 1000)
+    ms = max(0, round(seconds * 1000)); h, rem = divmod(ms, 3_600_000); m, rem = divmod(rem, 60_000); s, milli = divmod(rem, 1000)
     return f"{h:02}:{m:02}:{s:02},{milli:03}"
 
 
-def _voice_for_speaker(
-    speaker: str,
-    default_voice: str,
-    default_style: str,
-    default_reference: str | None,
-) -> tuple[str, str, str | None, float, float]:
+def _voice_for_speaker(speaker: str, default_voice: str, default_style: str, default_reference: str | None) -> tuple[str, str, str | None, float, float]:
     if not speaker or speaker == "Narrator":
         return default_voice, default_style, default_reference, 1.0, 1.0
     asset = find_asset(speaker)
     if not asset or asset.type != "character":
         return default_voice, default_style, default_reference, 1.0, 1.0
-    voice = asset.voice or ""
-    style = asset.voice_style or default_style
-    reference = asset.voice_reference_path or None
-    return voice, style, reference, asset.voice_speed, asset.voice_volume
+    return asset.voice or "", asset.voice_style or default_style, asset.voice_reference_path or None, asset.voice_speed, asset.voice_volume
 
 
 def _reflection_settings(section_type: str) -> dict[str, float | str] | None:
     return REFLECTION_AUDIO.get(section_type)
 
 
-async def build_narration_and_subtitles(
-    scenes,
-    language: str,
-    voice: str,
-    style: str,
-    workdir: Path,
-    reference_voice_path: str | None = None,
-):
-    audio_dir = workdir / "audio_parts"
-    audio_dir.mkdir(parents=True, exist_ok=True)
-
-    short_silence = audio_dir / "silence-short.wav"
-    heart_before = audio_dir / "silence-heart-before.wav"
-    parents_before = audio_dir / "silence-parents-before.wav"
-    heart_after = audio_dir / "silence-heart-after.wav"
-    parents_after = audio_dir / "silence-parents-after.wav"
-    await make_silence(short_silence, 0.12)
-    await make_silence(heart_before, float(REFLECTION_AUDIO["heart_lesson"]["pause_before"]))
-    await make_silence(parents_before, float(REFLECTION_AUDIO["parents"]["pause_before"]))
-    await make_silence(heart_after, float(REFLECTION_AUDIO["heart_lesson"]["pause_after"]))
-    await make_silence(parents_after, float(REFLECTION_AUDIO["parents"]["pause_after"]))
-
-    concat_entries: list[Path] = []
-    subtitle_entries: list[dict] = []
-    cursor = 0.0
-    index = 0
+async def build_narration_and_subtitles(scenes, language: str, voice: str, style: str, workdir: Path, reference_voice_path: str | None = None, narrator_speed: float = 1.0):
+    audio_dir = workdir / "audio_parts"; audio_dir.mkdir(parents=True, exist_ok=True)
+    short_silence = audio_dir / "silence-short.wav"; heart_before = audio_dir / "silence-heart-before.wav"; parents_before = audio_dir / "silence-parents-before.wav"; heart_after = audio_dir / "silence-heart-after.wav"; parents_after = audio_dir / "silence-parents-after.wav"
+    await make_silence(short_silence, 0.12); await make_silence(heart_before, float(REFLECTION_AUDIO["heart_lesson"]["pause_before"])); await make_silence(parents_before, float(REFLECTION_AUDIO["parents"]["pause_before"])); await make_silence(heart_after, float(REFLECTION_AUDIO["heart_lesson"]["pause_after"])); await make_silence(parents_after, float(REFLECTION_AUDIO["parents"]["pause_after"]))
+    concat_entries: list[Path] = []; subtitle_entries: list[dict] = []; cursor = 0.0; index = 0
 
     for scene in scenes:
-        section_type = getattr(scene, "section_type", "story") or "story"
-        reflection = _reflection_settings(section_type)
-
+        section_type = getattr(scene, "section_type", "story") or "story"; reflection = _reflection_settings(section_type)
         if reflection:
-            before_path = heart_before if section_type == "heart_lesson" else parents_before
-            before_seconds = float(reflection["pause_before"])
-            concat_entries.append(before_path)
-            cursor += before_seconds
-
+            before_path = heart_before if section_type == "heart_lesson" else parents_before; concat_entries.append(before_path); cursor += float(reflection["pause_before"])
         scene_start = cursor
-        if reflection:
-            # Reflection sections are always spoken by the narrator, never accidentally
-            # interpreted as character dialogue because the text contains a character name.
-            voice_chunks = [("Narrator", scene.narration)]
-        else:
-            voice_chunks = split_voice_chunks(scene.narration, scene.characters)
-
+        voice_chunks = [("Narrator", scene.narration)] if reflection else split_voice_chunks(scene.narration, scene.characters)
         for speaker, chunk in voice_chunks:
-            selected_voice, selected_style, selected_reference, selected_speed, selected_volume = _voice_for_speaker(
-                speaker, voice, style, reference_voice_path
-            )
+            selected_voice, selected_style, selected_reference, selected_speed, selected_volume = _voice_for_speaker(speaker, voice, style, reference_voice_path)
+            if speaker == "Narrator":
+                selected_speed *= narrator_speed
             if reflection:
-                selected_style = str(reflection["style"])
-                selected_speed *= float(reflection["speed"])
-                selected_volume *= float(reflection["volume"])
-
+                selected_style = str(reflection["style"]); selected_speed *= float(reflection["speed"]); selected_volume *= float(reflection["volume"])
             for phrase in split_phrases(chunk):
-                index += 1
-                part = audio_dir / f"phrase-{index:04d}.wav"
-                await synthesize_phrase(
-                    phrase,
-                    language,
-                    selected_voice,
-                    selected_style,
-                    part,
-                    selected_reference,
-                    selected_speed,
-                    selected_volume,
-                )
+                index += 1; part = audio_dir / f"phrase-{index:04d}.wav"
+                await synthesize_phrase(phrase, language, selected_voice, selected_style, part, selected_reference, selected_speed, selected_volume)
                 seconds = await duration(part)
-                subtitle_entries.append({
-                    "index": index,
-                    "scene_number": scene.scene_number,
-                    "section_type": section_type,
-                    "speaker": speaker,
-                    "text": phrase,
-                    "start": cursor,
-                    "end": cursor + seconds,
-                })
-                concat_entries.append(part)
-                cursor += seconds
-                concat_entries.append(short_silence)
-                cursor += 0.12
-
+                subtitle_entries.append({"index": index, "scene_number": scene.scene_number, "section_type": section_type, "speaker": speaker, "text": phrase, "start": cursor, "end": cursor + seconds})
+                concat_entries.append(part); cursor += seconds; concat_entries.append(short_silence); cursor += 0.12
         if reflection:
-            after_path = heart_after if section_type == "heart_lesson" else parents_after
-            after_seconds = float(reflection["pause_after"])
-            concat_entries.append(after_path)
-            cursor += after_seconds
+            after_path = heart_after if section_type == "heart_lesson" else parents_after; concat_entries.append(after_path); cursor += float(reflection["pause_after"])
+        scene.start_seconds = scene_start; scene.end_seconds = cursor; scene.duration_seconds = max(0.1, cursor - scene_start)
 
-        scene.start_seconds = scene_start
-        scene.end_seconds = cursor
-        scene.duration_seconds = max(0.1, cursor - scene_start)
-
-    concat_file = audio_dir / "concat.txt"
-    concat_file.write_text(
-        "\n".join(f"file '{p.resolve().as_posix()}'" for p in concat_entries),
-        encoding="utf-8",
-    )
-    narration = workdir / "narration.wav"
-    await _run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
-        "-c:a", "pcm_s16le", str(narration),
-    ])
-    srt = workdir / "subtitles.srt"
-    srt.write_text(
-        "\n".join(
-            f"{x['index']}\n{_srt_time(x['start'])} --> {_srt_time(x['end'])}\n{x['text']}\n"
-            for x in subtitle_entries
-        ),
-        encoding="utf-8",
-    )
-    (workdir / "subtitle-timing.json").write_text(
-        json.dumps(subtitle_entries, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    concat_file = audio_dir / "concat.txt"; concat_file.write_text("\n".join(f"file '{p.resolve().as_posix()}'" for p in concat_entries), encoding="utf-8")
+    narration = workdir / "narration.wav"; await _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c:a", "pcm_s16le", str(narration)])
+    srt = workdir / "subtitles.srt"; srt.write_text("\n".join(f"{x['index']}\n{_srt_time(x['start'])} --> {_srt_time(x['end'])}\n{x['text']}\n" for x in subtitle_entries), encoding="utf-8")
+    (workdir / "subtitle-timing.json").write_text(json.dumps(subtitle_entries, indent=2, ensure_ascii=False), encoding="utf-8")
     return narration, srt, subtitle_entries
