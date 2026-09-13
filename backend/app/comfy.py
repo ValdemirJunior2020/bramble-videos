@@ -55,9 +55,7 @@ async def checkpoint_name() -> str:
         return settings.comfyui_checkpoint.strip()
     value = _first_required_option(await _object_info("CheckpointLoaderSimple"), "ckpt_name")
     if not value:
-        raise RuntimeError(
-            "No ComfyUI checkpoint found. Put a checkpoint in ComfyUI/models/checkpoints or set COMFYUI_CHECKPOINT."
-        )
+        raise RuntimeError("No ComfyUI checkpoint found. Put a checkpoint in ComfyUI/models/checkpoints or set COMFYUI_CHECKPOINT.")
     return value
 
 
@@ -76,8 +74,12 @@ def _primary_reference_path(scene: Scene) -> Path | None:
     if len(scene.characters) != 1:
         return None
     asset = find_asset(scene.characters[0])
-    if not asset:
+    if not asset or not asset.identity_lock:
         return None
+    if asset.primary_image_path:
+        primary = Path(asset.primary_image_path)
+        if primary.exists():
+            return primary
     for value in asset.image_paths:
         path = Path(value)
         if path.exists():
@@ -108,92 +110,50 @@ def _base_nodes(checkpoint: str, prompt: str, negative: str) -> dict:
 
 def _text_workflow(checkpoint: str, prompt: str, negative: str, width: int, height: int, seed: int) -> dict:
     wf = _base_nodes(checkpoint, prompt, negative)
-    wf.update(
-        {
-            "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-            "3": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "seed": seed,
-                    "steps": 36,
-                    "cfg": 7.4,
-                    "sampler_name": "euler",
-                    "scheduler": "normal",
-                    "denoise": 1.0,
-                    "model": ["4", 0],
-                    "positive": ["6", 0],
-                    "negative": ["7", 0],
-                    "latent_image": ["5", 0],
-                },
-            },
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
-            "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}},
-        }
-    )
+    wf.update({
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "3": {"class_type": "KSampler", "inputs": {
+            "seed": seed, "steps": 36, "cfg": 7.4, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+            "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0],
+        }},
+        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}},
+    })
     return wf
 
 
-def _ipadapter_workflow(
-    checkpoint: str,
-    prompt: str,
-    negative: str,
-    width: int,
-    height: int,
-    seed: int,
-    reference_name: str,
-    adapter_file: str,
-    clip_name: str,
-) -> dict:
+def _ipadapter_workflow(checkpoint: str, prompt: str, negative: str, width: int, height: int, seed: int, reference_name: str, adapter_file: str, clip_name: str) -> dict:
     wf = _base_nodes(checkpoint, prompt, negative)
-    wf.update(
-        {
-            "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-            "10": {"class_type": "LoadImage", "inputs": {"image": reference_name}},
-            "11": {"class_type": "IPAdapterModelLoader", "inputs": {"ipadapter_file": adapter_file}},
-            "12": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": clip_name}},
-            "13": {
-                "class_type": "IPAdapterAdvanced",
-                "inputs": {
-                    "weight": 0.82,
-                    "weight_type": "linear",
-                    "combine_embeds": "concat",
-                    "start_at": 0.0,
-                    "end_at": 0.9,
-                    "embeds_scaling": "V only",
-                    "model": ["4", 0],
-                    "ipadapter": ["11", 0],
-                    "image": ["10", 0],
-                    "clip_vision": ["12", 0],
-                },
-            },
-            "3": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "seed": seed,
-                    "steps": 36,
-                    "cfg": 7.4,
-                    "sampler_name": "euler",
-                    "scheduler": "normal",
-                    "denoise": 1.0,
-                    "model": ["13", 0],
-                    "positive": ["6", 0],
-                    "negative": ["7", 0],
-                    "latent_image": ["5", 0],
-                },
-            },
-            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
-            "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}},
-        }
-    )
+    wf.update({
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "10": {"class_type": "LoadImage", "inputs": {"image": reference_name}},
+        "11": {"class_type": "IPAdapterModelLoader", "inputs": {"ipadapter_file": adapter_file}},
+        "12": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": clip_name}},
+        "13": {"class_type": "IPAdapterAdvanced", "inputs": {
+            "weight": 0.90,
+            "weight_type": "linear",
+            "combine_embeds": "concat",
+            "start_at": 0.0,
+            "end_at": 0.95,
+            "embeds_scaling": "V only",
+            "model": ["4", 0],
+            "ipadapter": ["11", 0],
+            "image": ["10", 0],
+            "clip_vision": ["12", 0],
+        }},
+        "3": {"class_type": "KSampler", "inputs": {
+            "seed": seed, "steps": 38, "cfg": 7.2, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+            "model": ["13", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0],
+        }},
+        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "bramble_scene", "images": ["8", 0]}},
+    })
     return wf
 
 
 async def _queue(workflow: dict, client_id: str) -> str:
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            f"{settings.comfyui_url.rstrip('/')}/prompt",
-            json={"prompt": workflow, "client_id": client_id},
-        )
+        response = await client.post(f"{settings.comfyui_url.rstrip('/')}/prompt", json={"prompt": workflow, "client_id": client_id})
         response.raise_for_status()
         return response.json()["prompt_id"]
 
@@ -208,11 +168,9 @@ async def generate_scene_image(project: Project, scene: Scene, out_path: Path, f
     client_id = str(uuid4())
     prompt_id = ""
 
-    # Important: global IP-Adapter conditioning with multiple different character
-    # references causes identity bleed, hybrid species and duplicated/split bodies.
-    # Until regional/masked conditioning is available, use the approved primary
-    # reference only for single-character shots. Multi-character scenes use the
-    # strict canonical text locks from planner.py instead of blending references.
+    # A single character gets its locked primary identity reference at high weight.
+    # Multiple global references are intentionally not blended because that caused
+    # species leakage, duplicate tails, fused bodies and outfit swapping.
     if len(scene.characters) == 1 and not force_text_only:
         options = await _ipadapter_options()
         if options:
@@ -221,27 +179,14 @@ async def generate_scene_image(project: Project, scene: Scene, out_path: Path, f
                 if ref:
                     reference_name = await _upload_reference(ref)
                     prompt_id = await _queue(
-                        _ipadapter_workflow(
-                            checkpoint,
-                            scene.image_prompt,
-                            scene.negative_prompt,
-                            width,
-                            height,
-                            seed,
-                            reference_name,
-                            options[0],
-                            options[1],
-                        ),
+                        _ipadapter_workflow(checkpoint, scene.image_prompt, scene.negative_prompt, width, height, seed, reference_name, options[0], options[1]),
                         client_id,
                     )
             except Exception:
                 prompt_id = ""
 
     if not prompt_id:
-        prompt_id = await _queue(
-            _text_workflow(checkpoint, scene.image_prompt, scene.negative_prompt, width, height, seed),
-            client_id,
-        )
+        prompt_id = await _queue(_text_workflow(checkpoint, scene.image_prompt, scene.negative_prompt, width, height, seed), client_id)
 
     async with httpx.AsyncClient(timeout=30) as client:
         for _ in range(600):
@@ -253,11 +198,7 @@ async def generate_scene_image(project: Project, scene: Scene, out_path: Path, f
                 continue
             for node in history[prompt_id].get("outputs", {}).values():
                 for image in node.get("images", []):
-                    params = {
-                        "filename": image["filename"],
-                        "subfolder": image.get("subfolder", ""),
-                        "type": image.get("type", "output"),
-                    }
+                    params = {"filename": image["filename"], "subfolder": image.get("subfolder", ""), "type": image.get("type", "output")}
                     result = await client.get(f"{settings.comfyui_url.rstrip('/')}/view", params=params)
                     result.raise_for_status()
                     out_path.parent.mkdir(parents=True, exist_ok=True)
