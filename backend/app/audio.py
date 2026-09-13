@@ -162,7 +162,7 @@ async def _sapi(text: str, language: str, voice: str, style: str, output: Path) 
     script = f"Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices=$s.GetInstalledVoices() | ForEach-Object {{$_.VoiceInfo}}; $v=$null; if ('{requested}' -ne '') {{$v=$voices | Where-Object {{$_.Name -eq '{requested}'}} | Select-Object -First 1}}; if ($null -eq $v) {{$v=$voices | Where-Object {{$_.Culture.Name -eq '{culture}'}} | Select-Object -First 1}}; if ($null -eq $v) {{ throw 'No installed Windows voice matches {culture}. Choose or install a local voice for this language.' }}; $s.SelectVoice($v.Name); $s.Rate={rate}; $s.SetOutputToWaveFile('{target}'); $s.Speak('{txt}'); $s.Dispose()"
     await _run(["powershell", "-NoProfile", "-Command", script])
 
-async def _chatterbox(text: str, style: str, output: Path, reference_voice: Path | None = None) -> None:
+async def _chatterbox(text: str, language: str, style: str, output: Path, reference_voice: Path | None = None) -> None:
     profile = EMOTION_PROFILES.get((style or "warm").strip().lower(), EMOTION_PROFILES["warm"])
     base = settings.chatterbox_url.rstrip("/")
     async with httpx.AsyncClient(timeout=None) as client:
@@ -172,6 +172,7 @@ async def _chatterbox(text: str, style: str, output: Path, reference_voice: Path
                     f"{base}/synthesize-upload",
                     data={
                         "text": text,
+                        "language": language,
                         "style": style,
                         "exaggeration": str(profile["exaggeration"]),
                         "cfg_weight": str(profile["cfg_weight"]),
@@ -184,6 +185,7 @@ async def _chatterbox(text: str, style: str, output: Path, reference_voice: Path
                 f"{base}/synthesize",
                 json={
                     "text": text,
+                    "language": language,
                     "style": style,
                     "exaggeration": profile["exaggeration"],
                     "cfg_weight": profile["cfg_weight"],
@@ -209,12 +211,20 @@ async def normalize_wav(source: Path, target: Path, speed: float = 1.0, volume: 
 async def synthesize_phrase(text: str, language: str, voice: str, style: str, output: Path, reference_voice_path: str | None = None, speed: float = 1.0, volume: float = 1.0) -> None:
     raw = output.with_name(output.stem + "-raw.wav")
     reference = Path(reference_voice_path) if reference_voice_path else None
-    use_chatterbox = voice == "__chatterbox__" or bool(reference) or (language == "en" and not voice)
-    if use_chatterbox and await _chatterbox_available():
+    use_chatterbox = voice == "__chatterbox__" or bool(reference) or not voice
+    chatterbox_available = await _chatterbox_available()
+    if use_chatterbox and chatterbox_available:
+        await _chatterbox(text, language, style, raw, reference)
+    elif voice and voice != "__chatterbox__":
         try:
-            await _chatterbox(text, style, raw, reference)
-        except Exception:
             await _sapi(text, language, voice, style, raw)
+        except Exception:
+            if chatterbox_available:
+                await _chatterbox(text, language, style, raw, reference)
+            else:
+                raise
+    elif chatterbox_available:
+        await _chatterbox(text, language, style, raw, reference)
     else:
         await _sapi(text, language, voice, style, raw)
     await normalize_wav(raw, output, settings.narration_speed * speed, volume)
