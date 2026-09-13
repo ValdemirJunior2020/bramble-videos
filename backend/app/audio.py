@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
+import sys
 from pathlib import Path
 
 import httpx
@@ -30,6 +32,15 @@ STYLE_RATE = {
     "dramatic": 0,
     "sermon": -2,
 }
+PIPER_STYLE_SPEED = {
+    "calm": 0.93,
+    "documentary": 0.97,
+    "warm": 0.96,
+    "inspirational": 1.00,
+    "emotional": 0.94,
+    "dramatic": 0.91,
+    "sermon": 0.90,
+}
 SPEECH_VERBS = "said|asked|replied|answered|whispered|shouted|cried|called|squeaked|murmured|laughed|exclaimed|yelled|spoke"
 QUOTE_PATTERN = re.compile(r'[“\"]([^”\"]+)[”\"]')
 
@@ -37,12 +48,14 @@ QUOTE_PATTERN = re.compile(r'[“\"]([^”\"]+)[”\"]')
 def _ps_escape(value: str) -> str:
     return value.replace("'", "''")
 
+
 async def _run(cmd: list[str]) -> tuple[str, str]:
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(err.decode(errors="ignore")[-3000:])
     return out.decode(errors="ignore"), err.decode(errors="ignore")
+
 
 async def list_sapi_voices() -> list[VoiceInfo]:
     script = "Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.GetInstalledVoices() | ForEach-Object { $i=$_.VoiceInfo; Write-Output ($i.Name+'|'+$i.Culture.Name+'|'+$i.Gender) }"
@@ -56,6 +69,7 @@ async def list_sapi_voices() -> list[VoiceInfo]:
         if parts and parts[0]:
             voices.append(VoiceInfo(name=parts[0], culture=parts[1] if len(parts) > 1 else "", gender=parts[2] if len(parts) > 2 else ""))
     return voices
+
 
 def split_phrases(text: str, max_words: int = 9) -> list[str]:
     text = re.sub(r"\s+", " ", text.strip())
@@ -98,11 +112,6 @@ def _speaker_from_context(prefix: str, suffix: str, scene_characters: list[str])
 
 
 def split_voice_chunks(text: str, scene_characters: list[str]) -> list[tuple[str, str]]:
-    """Split narration into narrator/dialogue chunks without rewriting the script.
-
-    Supports explicit `Name: dialogue`, quoted dialogue with nearby attribution, and
-    falls back to Narrator when a speaker cannot be identified safely.
-    """
     normalized = re.sub(r"\s+", " ", text.strip())
     if not normalized:
         return []
@@ -152,15 +161,53 @@ async def _chatterbox_available() -> bool:
     except Exception:
         return False
 
+
 async def _sapi(text: str, language: str, voice: str, style: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     target = _ps_escape(str(output.resolve()))
     txt = _ps_escape(text)
-    requested = _ps_escape(voice if voice != "__chatterbox__" else "")
+    requested = _ps_escape(voice if voice not in {"__chatterbox__", "__piper_ptbr__"} else "")
     culture = "pt-BR" if language == "pt-BR" else "en-US"
     rate = STYLE_RATE.get((style or "warm").strip().lower(), -1)
-    script = f"Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices=$s.GetInstalledVoices() | ForEach-Object {{$_.VoiceInfo}}; $v=$null; if ('{requested}' -ne '') {{$v=$voices | Where-Object {{$_.Name -eq '{requested}'}} | Select-Object -First 1}}; if ($null -eq $v) {{$v=$voices | Where-Object {{$_.Culture.Name -eq '{culture}'}} | Select-Object -First 1}}; if ($null -eq $v) {{ throw 'No installed Windows voice matches {culture}. Choose or install a local voice for this language.' }}; $s.SelectVoice($v.Name); $s.Rate={rate}; $s.SetOutputToWaveFile('{target}'); $s.Speak('{txt}'); $s.Dispose()"
+    script = f"Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $voices=$s.GetInstalledVoices() | ForEach-Object {{$_.VoiceInfo}}; $v=$null; if ('{requested}' -ne '') {{$v=$voices | Where-Object {{$_.Name -eq '{requested}'}} | Select-Object -First 1}}; if ($null -eq $v) {{$v=$voices | Where-Object {{$_.Culture.Name -eq '{culture}'}} | Select-Object -First 1}}; if ($null -eq $v) {{ throw 'No installed Windows voice matches {culture}.' }}; $s.SelectVoice($v.Name); $s.Rate={rate}; $s.SetOutputToWaveFile('{target}'); $s.Speak('{txt}'); $s.Dispose()"
     await _run(["powershell", "-NoProfile", "-Command", script])
+
+
+def _piper_executable() -> str:
+    found = shutil.which("piper")
+    if found:
+        return found
+    scripts = Path(sys.executable).resolve().parent
+    for name in ("piper.exe", "piper"):
+        candidate = scripts / name
+        if candidate.exists():
+            return str(candidate)
+    raise RuntimeError("Brazilian Portuguese voice engine is missing. Run INSTALL.bat again to install Piper TTS.")
+
+
+async def _piper_ptbr(text: str, style: str, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    voice_dir = settings.storage_path / "voices" / "piper"
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        _piper_executable(),
+        "--model", "pt_BR-faber-medium",
+        "--data-dir", str(voice_dir),
+        "--download-dir", str(voice_dir),
+        "--output_file", str(output),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate(text.encode("utf-8"))
+    if proc.returncode != 0:
+        raise RuntimeError((err or out).decode(errors="ignore")[-3000:])
+    if not output.exists():
+        raise RuntimeError("Piper Brazilian Portuguese voice did not create audio")
+
 
 async def _chatterbox(text: str, language: str, style: str, output: Path, reference_voice: Path | None = None) -> None:
     profile = EMOTION_PROFILES.get((style or "warm").strip().lower(), EMOTION_PROFILES["warm"])
@@ -175,7 +222,7 @@ async def _chatterbox(text: str, language: str, style: str, output: Path, refere
                         "language": language,
                         "style": style,
                         "exaggeration": str(profile["exaggeration"]),
-                        "cfg_weight": str(profile["cfg_weight"]),
+                        "cfg_weight": str(0.0 if language == "pt-BR" else profile["cfg_weight"]),
                         "temperature": str(profile["temperature"]),
                     },
                     files={"reference": (reference_voice.name, handle, "audio/wav")},
@@ -195,6 +242,7 @@ async def _chatterbox(text: str, language: str, style: str, output: Path, refere
         response.raise_for_status()
         output.write_bytes(response.content)
 
+
 async def normalize_wav(source: Path, target: Path, speed: float = 1.0, volume: float = 1.0) -> None:
     filters: list[str] = []
     chain: list[str] = []
@@ -208,11 +256,37 @@ async def normalize_wav(source: Path, target: Path, speed: float = 1.0, volume: 
         filters = ["-filter:a", ",".join(chain)]
     await _run(["ffmpeg", "-y", "-i", str(source), *filters, "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(target)])
 
-async def synthesize_phrase(text: str, language: str, voice: str, style: str, output: Path, reference_voice_path: str | None = None, speed: float = 1.0, volume: float = 1.0) -> None:
+
+async def synthesize_phrase(
+    text: str,
+    language: str,
+    voice: str,
+    style: str,
+    output: Path,
+    reference_voice_path: str | None = None,
+    speed: float = 1.0,
+    volume: float = 1.0,
+) -> None:
     raw = output.with_name(output.stem + "-raw.wav")
     reference = Path(reference_voice_path) if reference_voice_path else None
-    use_chatterbox = voice == "__chatterbox__" or bool(reference) or not voice
     chatterbox_available = await _chatterbox_available()
+
+    if language == "pt-BR":
+        if reference and reference.exists() and chatterbox_available:
+            await _chatterbox(text, language, style, raw, reference)
+        elif voice and voice not in {"__chatterbox__", "__piper_ptbr__"}:
+            try:
+                await _sapi(text, language, voice, style, raw)
+            except Exception:
+                await _piper_ptbr(text, style, raw)
+        else:
+            await _piper_ptbr(text, style, raw)
+        piper_speed = PIPER_STYLE_SPEED.get((style or "warm").strip().lower(), 0.96)
+        await normalize_wav(raw, output, settings.narration_speed * speed * piper_speed, volume)
+        raw.unlink(missing_ok=True)
+        return
+
+    use_chatterbox = voice == "__chatterbox__" or bool(reference) or not voice
     if use_chatterbox and chatterbox_available:
         await _chatterbox(text, language, style, raw, reference)
     elif voice and voice != "__chatterbox__":
@@ -230,12 +304,21 @@ async def synthesize_phrase(text: str, language: str, voice: str, style: str, ou
     await normalize_wav(raw, output, settings.narration_speed * speed, volume)
     raw.unlink(missing_ok=True)
 
+
 async def duration(path: Path) -> float:
-    out, _ = await _run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)])
+    out, _ = await _run([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+    ])
     return float(out.strip())
 
+
 async def make_silence(path: Path, seconds: float = 0.12) -> None:
-    await _run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(path)])
+    await _run([
+        "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+        "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(path),
+    ])
+
 
 def _srt_time(seconds: float) -> str:
     ms = max(0, round(seconds * 1000))
@@ -245,19 +328,31 @@ def _srt_time(seconds: float) -> str:
     return f"{h:02}:{m:02}:{s:02},{milli:03}"
 
 
-def _voice_for_speaker(speaker: str, default_voice: str, default_style: str, default_reference: str | None) -> tuple[str, str, str | None, float, float]:
+def _voice_for_speaker(
+    speaker: str,
+    default_voice: str,
+    default_style: str,
+    default_reference: str | None,
+) -> tuple[str, str, str | None, float, float]:
     if not speaker or speaker == "Narrator":
         return default_voice, default_style, default_reference, 1.0, 1.0
     asset = find_asset(speaker)
     if not asset or asset.type != "character":
         return default_voice, default_style, default_reference, 1.0, 1.0
-    voice = asset.voice or "__chatterbox__"
+    voice = asset.voice or ""
     style = asset.voice_style or default_style
     reference = asset.voice_reference_path or None
     return voice, style, reference, asset.voice_speed, asset.voice_volume
 
 
-async def build_narration_and_subtitles(scenes, language: str, voice: str, style: str, workdir: Path, reference_voice_path: str | None = None):
+async def build_narration_and_subtitles(
+    scenes,
+    language: str,
+    voice: str,
+    style: str,
+    workdir: Path,
+    reference_voice_path: str | None = None,
+):
     audio_dir = workdir / "audio_parts"
     audio_dir.mkdir(parents=True, exist_ok=True)
     silence = audio_dir / "silence.wav"
@@ -266,6 +361,7 @@ async def build_narration_and_subtitles(scenes, language: str, voice: str, style
     subtitle_entries: list[dict] = []
     cursor = 0.0
     index = 0
+
     for scene in scenes:
         scene_start = cursor
         voice_chunks = split_voice_chunks(scene.narration, scene.characters)
@@ -302,11 +398,27 @@ async def build_narration_and_subtitles(scenes, language: str, voice: str, style
         scene.start_seconds = scene_start
         scene.end_seconds = cursor
         scene.duration_seconds = max(0.1, cursor - scene_start)
+
     concat_file = audio_dir / "concat.txt"
-    concat_file.write_text("\n".join(f"file '{p.resolve().as_posix()}'" for p in concat_entries), encoding="utf-8")
+    concat_file.write_text(
+        "\n".join(f"file '{p.resolve().as_posix()}'" for p in concat_entries),
+        encoding="utf-8",
+    )
     narration = workdir / "narration.wav"
-    await _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c:a", "pcm_s16le", str(narration)])
+    await _run([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
+        "-c:a", "pcm_s16le", str(narration),
+    ])
     srt = workdir / "subtitles.srt"
-    srt.write_text("\n".join(f"{x['index']}\n{_srt_time(x['start'])} --> {_srt_time(x['end'])}\n{x['text']}\n" for x in subtitle_entries), encoding="utf-8")
-    (workdir / "subtitle-timing.json").write_text(json.dumps(subtitle_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+    srt.write_text(
+        "\n".join(
+            f"{x['index']}\n{_srt_time(x['start'])} --> {_srt_time(x['end'])}\n{x['text']}\n"
+            for x in subtitle_entries
+        ),
+        encoding="utf-8",
+    )
+    (workdir / "subtitle-timing.json").write_text(
+        json.dumps(subtitle_entries, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     return narration, srt, subtitle_entries
