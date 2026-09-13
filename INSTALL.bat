@@ -74,17 +74,38 @@ if not exist "backend\.venv\Scripts\piper.exe" (
 if not exist "storage" mkdir "storage"
 if not exist "storage\voices" mkdir "storage\voices"
 if not exist "storage\voices\piper" mkdir "storage\voices\piper"
+
 if not exist "storage\voices\piper\pt_BR-faber-medium.onnx" (
   echo Downloading Brazilian Portuguese pt-BR voice. This happens only once...
-  echo Teste de voz em portugues brasileiro.| "backend\.venv\Scripts\piper.exe" --model pt_BR-faber-medium --data-dir "storage\voices\piper" --download-dir "storage\voices\piper" --output_file "storage\voices\piper\ptbr-install-test.wav" >> "%LOG%" 2>&1
+  "backend\.venv\Scripts\python.exe" -m piper.download_voices --data-dir "storage\voices\piper" pt_BR-faber-medium >> "%LOG%" 2>&1
   if errorlevel 1 (
     echo [ERROR] Brazilian Portuguese voice download failed. See install.log.
     goto :fail
   )
-  if exist "storage\voices\piper\ptbr-install-test.wav" del /q "storage\voices\piper\ptbr-install-test.wav" >nul 2>nul
 ) else (
-  echo [SKIP] Brazilian Portuguese voice already downloaded
+  echo [SKIP] Brazilian Portuguese voice model already downloaded
 )
+
+if not exist "storage\voices\piper\pt_BR-faber-medium.onnx" (
+  echo [ERROR] Brazilian Portuguese .onnx voice file is missing after download.
+  goto :fail
+)
+if not exist "storage\voices\piper\pt_BR-faber-medium.onnx.json" (
+  echo [ERROR] Brazilian Portuguese voice config is missing after download.
+  goto :fail
+)
+
+echo Testing Brazilian Portuguese voice...
+echo Teste de voz em portugues brasileiro.| "backend\.venv\Scripts\piper.exe" --model "storage\voices\piper\pt_BR-faber-medium.onnx" --output_file "storage\voices\piper\ptbr-install-test.wav" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [ERROR] Brazilian Portuguese voice test failed. See install.log.
+  goto :fail
+)
+if not exist "storage\voices\piper\ptbr-install-test.wav" (
+  echo [ERROR] Brazilian Portuguese voice test did not create audio.
+  goto :fail
+)
+del /q "storage\voices\piper\ptbr-install-test.wav" >nul 2>nul
 echo [OK] Backend packages and pt-BR voice verified
 
 echo.
@@ -157,6 +178,8 @@ call TEST.bat /quiet >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail
 if not exist "backend\.venv\Scripts\python.exe" goto :fail
 if not exist "backend\.venv\Scripts\piper.exe" goto :fail
+if not exist "storage\voices\piper\pt_BR-faber-medium.onnx" goto :fail
+if not exist "storage\voices\piper\pt_BR-faber-medium.onnx.json" goto :fail
 if not exist "frontend\node_modules\.bin\vite.cmd" goto :fail
 
 > ".bramble-installed" echo Installed %date% %time%
