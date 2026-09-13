@@ -119,6 +119,7 @@ async def create_project(request: ProjectCreate):
         custom_height=request.custom_height,
         voice=request.voice,
         narration_style=request.narration_style,
+        narrator_speed=request.narrator_speed,
         reference_voice_path=request.reference_voice_path,
         consistency_lock=request.consistency_lock,
         generate_images=request.generate_images,
