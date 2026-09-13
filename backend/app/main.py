@@ -19,7 +19,7 @@ from .pipeline import load_project, project_dir, save_project, start_render
 from .planner import plan_scenes, build_prompt
 from .video import detect_encoder
 
-app = FastAPI(title="Bramble Videos", version="1.2.0")
+app = FastAPI(title="Bramble Videos", version="1.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
@@ -30,16 +30,16 @@ app.add_middleware(
 
 
 async def _prepare_script_language(request: ProjectCreate) -> None:
-    """Normalize Portuguese projects to natural Brazilian Portuguese before planning/TTS.
-
-    The Studio language selector controls the narration language. If pt-BR is selected
-    while the pasted script is English (or mixed English/Portuguese), feeding the raw
-    English text into a Brazilian Portuguese TTS voice produces phonetic gibberish.
-    This uses the already-local Ollama model to translate only what needs translation,
-    while preserving names, dialogue labels, headings and story structure.
-    """
+    """Normalize Portuguese projects to natural Brazilian Portuguese before planning/TTS."""
     if request.language != "pt-BR":
         return
+
+    mode_context = {
+        "bramble": "a calm children's story episode",
+        "bible": "a reverent Bible/devotional video script",
+        "general": "a general video narration script",
+        "custom": "a custom video narration script",
+    }.get(request.project_mode, "a video narration script")
 
     body = {
         "model": settings.ollama_model,
@@ -49,19 +49,20 @@ async def _prepare_script_language(request: ProjectCreate) -> None:
             {
                 "role": "system",
                 "content": (
-                    "You are a Brazilian Portuguese localization editor for a children's story production tool. "
+                    f"You are a Brazilian Portuguese localization editor for {mode_context}. "
                     "Return JSON only with one key named script. Convert the supplied script to natural Brazilian Portuguese (pt-BR). "
                     "If any part is already natural Brazilian Portuguese, preserve it. If the script is mixed English and Portuguese, "
-                    "translate only the English parts. Never use European Portuguese. Preserve character names exactly: Bramble, Grace, Pip, Oliver, Barnaby. "
-                    "Preserve dialogue labels, paragraph order, story meaning, punctuation, Markdown emphasis, and section structure. "
-                    "Translate section headings consistently: Heart Lesson -> Lição para o Coração; "
+                    "translate only the English parts. Never use European Portuguese and never use Spanish. Preserve proper names exactly. "
+                    "Preserve dialogue labels, paragraph order, story meaning, punctuation, Markdown emphasis, headings, Bible references, and section structure. "
+                    "For Bramble headings translate Heart Lesson -> Lição para o Coração and "
                     "For Parents: Why This Story Matters -> Para os Pais: Por Que Esta História é Importante. "
-                    "Do not summarize, shorten, expand, censor, rewrite the plot, or add commentary."
+                    "For Bible headings translate Spiritual Revelation -> Revelação Espiritual. "
+                    "Do not summarize, shorten, expand, rewrite the plot, alter Scripture references, or add commentary."
                 ),
             },
             {"role": "user", "content": request.script},
         ],
-        "options": {"temperature": 0.05},
+        "options": {"temperature": 0.03},
     }
 
     try:
@@ -175,6 +176,7 @@ async def create_project(request: ProjectCreate):
         id=uuid4().hex,
         title=request.title,
         script=request.script,
+        project_mode=request.project_mode,
         language=request.language,
         aspect=request.aspect,
         custom_width=request.custom_width,
