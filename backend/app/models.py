@@ -10,6 +10,7 @@ Aspect = Literal["16:9", "9:16", "1:1", "4:5", "custom"]
 NarrationStyle = Literal["Calm", "Documentary", "Warm", "Inspirational", "Emotional", "Dramatic", "Sermon"]
 SubtitlePosition = Literal["top", "middle", "bottom"]
 WatermarkPosition = Literal["top-left", "top-right", "bottom-left", "bottom-right"]
+SceneSection = Literal["story", "heart_lesson", "parents"]
 
 class Asset(BaseModel):
     id: str
@@ -37,6 +38,8 @@ class AssetVoiceUpdate(BaseModel):
 class Scene(BaseModel):
     scene_number: int = Field(ge=1)
     narration: str = Field(min_length=1)
+    section_type: SceneSection = "story"
+    section_label: str = ""
     characters: list[str] = Field(default_factory=list)
     location: str = ""
     emotion: str = "gentle"
