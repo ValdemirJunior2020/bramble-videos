@@ -41,6 +41,22 @@ PIPER_STYLE_SPEED = {
     "dramatic": 0.91,
     "sermon": 0.90,
 }
+REFLECTION_AUDIO = {
+    "heart_lesson": {
+        "style": "Warm",
+        "speed": 0.90,
+        "volume": 0.94,
+        "pause_before": 0.65,
+        "pause_after": 0.28,
+    },
+    "parents": {
+        "style": "Calm",
+        "speed": 0.84,
+        "volume": 0.90,
+        "pause_before": 1.00,
+        "pause_after": 0.38,
+    },
+}
 SPEECH_VERBS = "said|asked|replied|answered|whispered|shouted|cried|called|squeaked|murmured|laughed|exclaimed|yelled|spoke"
 QUOTE_PATTERN = re.compile(r'[“\"]([^”\"]+)[”\"]')
 
@@ -345,6 +361,10 @@ def _voice_for_speaker(
     return voice, style, reference, asset.voice_speed, asset.voice_volume
 
 
+def _reflection_settings(section_type: str) -> dict[str, float | str] | None:
+    return REFLECTION_AUDIO.get(section_type)
+
+
 async def build_narration_and_subtitles(
     scenes,
     language: str,
@@ -355,20 +375,50 @@ async def build_narration_and_subtitles(
 ):
     audio_dir = workdir / "audio_parts"
     audio_dir.mkdir(parents=True, exist_ok=True)
-    silence = audio_dir / "silence.wav"
-    await make_silence(silence)
+
+    short_silence = audio_dir / "silence-short.wav"
+    heart_before = audio_dir / "silence-heart-before.wav"
+    parents_before = audio_dir / "silence-parents-before.wav"
+    heart_after = audio_dir / "silence-heart-after.wav"
+    parents_after = audio_dir / "silence-parents-after.wav"
+    await make_silence(short_silence, 0.12)
+    await make_silence(heart_before, float(REFLECTION_AUDIO["heart_lesson"]["pause_before"]))
+    await make_silence(parents_before, float(REFLECTION_AUDIO["parents"]["pause_before"]))
+    await make_silence(heart_after, float(REFLECTION_AUDIO["heart_lesson"]["pause_after"]))
+    await make_silence(parents_after, float(REFLECTION_AUDIO["parents"]["pause_after"]))
+
     concat_entries: list[Path] = []
     subtitle_entries: list[dict] = []
     cursor = 0.0
     index = 0
 
     for scene in scenes:
+        section_type = getattr(scene, "section_type", "story") or "story"
+        reflection = _reflection_settings(section_type)
+
+        if reflection:
+            before_path = heart_before if section_type == "heart_lesson" else parents_before
+            before_seconds = float(reflection["pause_before"])
+            concat_entries.append(before_path)
+            cursor += before_seconds
+
         scene_start = cursor
-        voice_chunks = split_voice_chunks(scene.narration, scene.characters)
+        if reflection:
+            # Reflection sections are always spoken by the narrator, never accidentally
+            # interpreted as character dialogue because the text contains a character name.
+            voice_chunks = [("Narrator", scene.narration)]
+        else:
+            voice_chunks = split_voice_chunks(scene.narration, scene.characters)
+
         for speaker, chunk in voice_chunks:
             selected_voice, selected_style, selected_reference, selected_speed, selected_volume = _voice_for_speaker(
                 speaker, voice, style, reference_voice_path
             )
+            if reflection:
+                selected_style = str(reflection["style"])
+                selected_speed *= float(reflection["speed"])
+                selected_volume *= float(reflection["volume"])
+
             for phrase in split_phrases(chunk):
                 index += 1
                 part = audio_dir / f"phrase-{index:04d}.wav"
@@ -386,6 +436,7 @@ async def build_narration_and_subtitles(
                 subtitle_entries.append({
                     "index": index,
                     "scene_number": scene.scene_number,
+                    "section_type": section_type,
                     "speaker": speaker,
                     "text": phrase,
                     "start": cursor,
@@ -393,8 +444,15 @@ async def build_narration_and_subtitles(
                 })
                 concat_entries.append(part)
                 cursor += seconds
-                concat_entries.append(silence)
+                concat_entries.append(short_silence)
                 cursor += 0.12
+
+        if reflection:
+            after_path = heart_after if section_type == "heart_lesson" else parents_after
+            after_seconds = float(reflection["pause_after"])
+            concat_entries.append(after_path)
+            cursor += after_seconds
+
         scene.start_seconds = scene_start
         scene.end_seconds = cursor
         scene.duration_seconds = max(0.1, cursor - scene_start)
