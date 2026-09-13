@@ -18,8 +18,14 @@ MASTER_NEGATIVE = (
     "rabbit ears on girl, squirrel ears on girl, owl features on girl, bear features on girl, turtle features on girl, "
     "human nose on animal, human skin on animal, wrong outfit, wrong colors, text, watermark, signature, scary, aggressive, "
     "hyper-saturated, neon colors, glowing eyes, blurry, low quality, low resolution, jpeg artifacts, flat lighting, "
-    "random unrelated person, wrong environment, old church art, statue, icon, manuscript, character sheet, turnaround sheet, "
+    "random unrelated person, wrong environment, statue, icon, manuscript, character sheet, turnaround sheet, "
     "model sheet, reference sheet, contact sheet, collage, split screen, multiple views, white studio background"
+)
+
+BIBLE_NEGATIVE = (
+    MASTER_NEGATIVE
+    + ", old church painting, medieval church art, stained glass illustration, religious statue, carved icon, illuminated manuscript, "
+      "parchment text, modern clothing, modern buildings, modern vehicles, microphones, stage lights, random priests, random monks"
 )
 
 PRONOUN_PATTERN = re.compile(r"\b(he|she|they|him|her|them|his|hers|their|ele|ela|eles|elas|dele|dela|deles|delas)\b", re.I)
@@ -41,6 +47,10 @@ EMOTIONS = [
 SECTION_HEADINGS: dict[str, tuple[str, str]] = {
     "heart lesson": ("heart_lesson", "Heart Lesson"),
     "licao para o coracao": ("heart_lesson", "Lição para o Coração"),
+    "spiritual revelation": ("heart_lesson", "Spiritual Revelation"),
+    "revelacao espiritual": ("heart_lesson", "Revelação Espiritual"),
+    "reflection": ("heart_lesson", "Reflection"),
+    "reflexao": ("heart_lesson", "Reflexão"),
     "for parents: why this story matters": ("parents", "For Parents: Why This Story Matters"),
     "for parents why this story matters": ("parents", "For Parents: Why This Story Matters"),
     "para os pais: por que esta historia e importante": ("parents", "Para os Pais: Por Que Esta História é Importante"),
@@ -73,11 +83,35 @@ CANONICAL_LOCKS = {
     ),
 }
 
+MODE_DIRECTOR = {
+    "bramble": (
+        "You are the cinematic scene director for Bramble & Grace, a calm low-stimulation premium 3D animated children's series. "
+        "Preserve the established Bramble characters and Meadowood continuity."
+    ),
+    "bible": (
+        "You are the cinematic director for a reverent Bible and devotional video series. "
+        "Treat Scripture and spiritual narration with dignity. Create cinematic live-action-looking scenes, not church artwork. "
+        "Use historically grounded ancient-world environments when people are explicitly present. Prefer environment-only imagery when the narration describes creation, darkness, void, sky, sea, land, light, nature, judgment, or symbolic spiritual concepts. "
+        "Never invent a random person merely because the narration is spiritual or abstract."
+    ),
+    "general": (
+        "You are a cinematic scene director for a general-purpose video production tool. "
+        "Follow the supplied narration literally without Bramble, Bible, or children's-show assumptions."
+    ),
+    "custom": (
+        "You are a cinematic scene director for a custom video project. "
+        "Follow the narration literally and prioritize any uploaded character, location, prop, and style references supplied in the asset catalog."
+    ),
+}
+
 
 def _heading_key(value: str) -> str:
     value = re.sub(r"[*_#]+", "", value).strip().lower()
-    value = value.replace("ç", "c").replace("ã", "a").replace("á", "a").replace("â", "a")
-    value = value.replace("é", "e").replace("ê", "e").replace("í", "i").replace("ó", "o").replace("ô", "o").replace("ú", "u")
+    for old, new in {
+        "ç": "c", "ã": "a", "á": "a", "â": "a", "é": "e", "ê": "e", "í": "i",
+        "ó": "o", "ô": "o", "ú": "u", "õ": "o",
+    }.items():
+        value = value.replace(old, new)
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -108,20 +142,14 @@ def _segment_plain(text: str, target_words: int = 24, max_words: int = 34) -> li
 
 
 def segment_script(script: str, target_words: int = 24, max_words: int = 34) -> list[str]:
-    """Backward-compatible plain segmentation used by tests and callers."""
     return _segment_plain(script, target_words=target_words, max_words=max_words)
 
 
 def segment_script_with_sections(script: str) -> list[dict[str, str]]:
-    """Preserve the story structure and remove section headings from spoken narration.
-
-    Recognizes the bilingual headings used in the Bramble & Grace story collection.
-    Headings themselves are metadata; only the text beneath them is narrated.
-    """
     normalized = script.replace("\r\n", "\n").replace("\r", "\n").strip()
-    # Help pasted text where a Markdown heading may touch the previous paragraph.
     heading_phrases = [
         "Heart Lesson", "Lição para o Coração", "Licao para o Coracao",
+        "Spiritual Revelation", "Revelação Espiritual", "Revelacao Espiritual", "Reflection", "Reflexão", "Reflexao",
         "For Parents: Why This Story Matters", "Para os Pais: Por Que Esta História é Importante",
         "Para os Pais: Por Que Esta Historia e Importante", "A Note to Parents", "Uma Mensagem aos Pais",
         "For Parents / Para os Pais",
@@ -145,8 +173,7 @@ def segment_script_with_sections(script: str) -> list[dict[str, str]]:
         line = raw_line.strip()
         if not line:
             continue
-        key = _heading_key(line)
-        heading = SECTION_HEADINGS.get(key)
+        heading = SECTION_HEADINGS.get(_heading_key(line))
         if heading:
             flush()
             current_type, current_label = heading
@@ -156,9 +183,7 @@ def segment_script_with_sections(script: str) -> list[dict[str, str]]:
 
     results: list[dict[str, str]] = []
     for section_type, label, text in blocks:
-        if section_type == "heart_lesson":
-            pieces = _segment_plain(text, target_words=30, max_words=42)
-        elif section_type == "parents":
+        if section_type in {"heart_lesson", "parents"}:
             pieces = _segment_plain(text, target_words=30, max_words=42)
         else:
             pieces = _segment_plain(text, target_words=24, max_words=34)
@@ -186,7 +211,7 @@ def _fallback(narration: str) -> dict:
     locs = recognized_names(narration, "location")
     lower = narration.lower()
     emotion = next((word for word in EMOTIONS if word in lower), "gentle")
-    return {"characters": chars, "location": locs[0] if locs else "", "emotion": emotion, "action": narration[:320]}
+    return {"characters": chars, "location": locs[0] if locs else "", "emotion": emotion, "action": narration[:420]}
 
 
 def _is_object_or_environment_focus(narration: str) -> bool:
@@ -203,7 +228,20 @@ def _is_object_or_environment_focus(narration: str) -> bool:
     return object_hits >= 2 and speech_hits == 0 and action_hits <= 1 and pronoun_hits <= 1
 
 
-async def _annotate(items: list[dict[str, str]], language: str):
+async def _annotate(items: list[dict[str, str]], language: str, project_mode: str):
+    director = MODE_DIRECTOR.get(project_mode, MODE_DIRECTOR["general"])
+    mode_rules = (
+        "For Bramble heart_lesson and parents sections, use peaceful reflective visuals instead of literal abstract teaching imagery. "
+        if project_mode == "bramble"
+        else ""
+    )
+    if project_mode == "bible":
+        mode_rules += (
+            "Never depict a generic church, cathedral, statue, icon, manuscript, priest, or modern worship scene unless explicitly requested. "
+            "When narration says the earth was formless, empty, dark, or describes creation before people exist, show only the environment with no human figure. "
+            "Do not add halos, glowing eyes, text, captions, or fantasy religious symbols."
+        )
+
     body = {
         "model": settings.ollama_model,
         "stream": False,
@@ -212,23 +250,22 @@ async def _annotate(items: list[dict[str, str]], language: str):
             {
                 "role": "system",
                 "content": (
-                    "You are the cinematic scene director for Bramble & Grace, a calm low-stimulation premium 3D animated children's series. "
-                    "Analyze every narration segment literally and visually. Never rewrite, translate, shorten, expand, or reorder narration. "
-                    "Return JSON only with key scenes. For each scene return scene_number, characters using only names from the asset catalog, "
+                    director
+                    + " Analyze every narration segment literally and visually. Never rewrite, translate, shorten, expand, or reorder narration. "
+                    "Return JSON only with key scenes. For each scene return scene_number, characters using only names from the asset catalog when a saved asset matches, "
                     "location, emotion, action, and visual_description. The image MUST depict what the narration is saying at that exact moment. "
                     "GRAMMAR IS CRITICAL: bind every adjective and size word to the noun it actually modifies. If narration says 'a tall gate', the GATE is tall, never the character. "
-                    "If narration says a small flower, huge tree, rusty gate, long path, dark cave, or wide stream, those properties belong only to that object or location. "
                     "Never transfer an object's height, size, color, age, texture, shape, or condition onto a character. "
-                    "For heart_lesson and parents sections, do not literalize abstract teaching language. Use peaceful reflective visuals from the established story world instead. "
-                    "Do not insert extra characters into object-focused or environment-focused narration. Only keep characters that are actively visible or necessary. "
-                    "Preserve character identity, species, clothing, colors, normal proportions, and continuity. Every character has one intact coherent body. "
-                    "Avoid more than two active characters unless clearly required by the narration."
+                    "Do not insert extra people or characters into object-focused or environment-focused narration. "
+                    "Preserve uploaded character identity, species, clothing, colors, normal proportions, and continuity. Every visible character has one intact coherent body. "
+                    + mode_rules
                 ),
             },
             {
                 "role": "user",
                 "content": json.dumps(
                     {
+                        "project_mode": project_mode,
                         "language": language,
                         "assets": _catalog(),
                         "segments": [
@@ -244,7 +281,7 @@ async def _annotate(items: list[dict[str, str]], language: str):
                 ),
             },
         ],
-        "options": {"temperature": 0.05},
+        "options": {"temperature": 0.04},
     }
     async with httpx.AsyncClient(timeout=180) as client:
         response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/chat", json=body)
@@ -272,52 +309,67 @@ def _traits(names: list[str]) -> str:
 
 
 def _canonical_rules(names: list[str]) -> str:
-    rules = [CANONICAL_LOCKS[name] for name in names if name in CANONICAL_LOCKS]
-    return " ".join(rules)
+    return " ".join(CANONICAL_LOCKS[name] for name in names if name in CANONICAL_LOCKS)
 
 
 def build_prompt(scene: Scene) -> str:
+    mode = getattr(scene, "project_mode", "bramble") or "bramble"
     primary_action = scene.action or scene.narration
-    if scene.section_type == "parents":
+
+    if mode == "bible":
         parts = [
-            "PARENT MESSAGE REFLECTION MODE — create a quiet, reassuring closing visual from the established episode world",
-            f"Visual direction: {primary_action}",
-            "Do NOT literally illustrate abstract parenting statements, developmental concepts, fear, mistakes, routines, or generic children",
-            "Do NOT introduce random parents or children. Prefer the established location after the story, gentle light, stillness, and emotional closure",
+            f"PRIMARY REQUIRED SHOT — faithfully visualize this exact Bible/devotional moment: {primary_action}",
+            f"Narration to match literally: {scene.narration}",
+            "cinematic live-action look, reverent and emotionally grounded, photorealistic natural environments, dramatic but believable light, filmic depth of field",
+            "historically plausible ancient Near Eastern clothing and architecture only when people or settlements are explicitly required",
+            "environment-first composition when narration describes creation, darkness, void, light, sky, water, land, wilderness, mountains, sea, stars, or symbolic spiritual themes",
+            "no random person in environment-only scenes, no old church-art style, no statues, no icons, no illuminated manuscripts, no stained-glass look, no modern objects",
+            "no text, Bible verses, captions, logos, or watermarks inside the generated image",
         ]
-    elif scene.section_type == "heart_lesson":
-        parts = [
-            "HEART LESSON REFLECTION MODE — this is a calm emotional takeaway, not a new action scene",
-            f"Visual direction: {primary_action}",
-            "Use familiar characters only if already present in the story and show them peaceful, safe, settled, and reflective",
-            "Do NOT literalize abstract moral words. Show the emotional result of the lesson with a simple calm composition",
-        ]
+        if scene.section_type == "heart_lesson":
+            parts.insert(0, "SPIRITUAL REVELATION MODE — slow, contemplative, peaceful visual with room for reflection")
+    elif mode == "bramble":
+        if scene.section_type == "parents":
+            parts = [
+                "PARENT MESSAGE REFLECTION MODE — create a quiet, reassuring closing visual from the established episode world",
+                f"Visual direction: {primary_action}",
+                "Do NOT literally illustrate abstract parenting statements or generic children",
+            ]
+        elif scene.section_type == "heart_lesson":
+            parts = [
+                "HEART LESSON REFLECTION MODE — this is a calm emotional takeaway, not a new action scene",
+                f"Visual direction: {primary_action}",
+                "Use familiar characters only if already present and show them peaceful, safe, settled, and reflective",
+            ]
+        else:
+            parts = [
+                f"PRIMARY REQUIRED SHOT — depict this exact visible moment and make it the dominant composition: {primary_action}",
+                f"Scene narration to match literally: {scene.narration}",
+                "STRICT ATTRIBUTE BINDING: adjectives and size words belong only to the noun they describe. A tall gate means the gate is tall; never make a character tall because the gate is tall.",
+            ]
     else:
+        label = "CUSTOM PROJECT" if mode == "custom" else "GENERAL VIDEO"
         parts = [
-            f"PRIMARY REQUIRED SHOT — depict this exact visible moment and make it the dominant composition: {primary_action}",
-            f"Scene narration to match literally: {scene.narration}",
-            (
-                "STRICT ATTRIBUTE BINDING: adjectives and size words belong only to the noun they describe. "
-                "A tall gate means the gate is tall; a large tree means the tree is large; a tiny flower means the flower is tiny. "
-                "Never make a character taller, shorter, wider, older, rusted, overgrown, colored, or reshaped because an object or location has that description."
-            ),
+            f"{label} — depict this exact visible moment: {primary_action}",
+            f"Narration to match literally: {scene.narration}",
+            "cinematic professional composition, natural anatomy, coherent scene, accurate subject-object relationships",
+            "do not import Bramble characters, Meadowood, Bible imagery, church art, or children's-show styling unless the script or uploaded references explicitly ask for it",
         ]
+
     if scene.characters:
-        parts.append(f"Only these characters may appear prominently: {', '.join(scene.characters)}")
+        parts.append(f"Only these saved reference characters may appear prominently: {', '.join(scene.characters)}")
         parts.append(_traits(scene.characters))
-        rules = _canonical_rules(scene.characters)
-        if rules:
-            parts.append(rules)
+        if mode == "bramble":
+            rules = _canonical_rules(scene.characters)
+            if rules:
+                parts.append(rules)
         parts.append(
-            "ANATOMY LOCK: render exactly one intact coherent body for each named character, with one head attached to one torso and all limbs naturally connected. "
-            "Never split a character into upper/lower pieces, never duplicate a torso or head, and never show floating or disconnected body parts."
+            "ANATOMY LOCK: exactly one intact coherent body per visible character, one head attached to one torso, natural connected limbs, no duplicated body parts, no split bodies."
         )
-        parts.append(
-            "Never merge characters. Never swap clothing. Never give one character another character's face, hair, fur, body, species traits, or outfit. "
-            "Each named character must stay visually separate, recognizable, and in their correct approved clothing."
-        )
-    else:
-        parts.append("Environment or object focused shot. No new characters in frame unless explicitly required by the established story moment.")
+        parts.append("Never merge characters, swap clothing, or transfer anatomy, species traits, faces, hair, fur, or outfits between characters.")
+    elif mode != "bible":
+        parts.append("No extra characters in frame unless the narration explicitly requires them.")
+
     if scene.location:
         location_traits = _traits([scene.location])
         if location_traits:
@@ -325,16 +377,25 @@ def build_prompt(scene: Scene) -> str:
         parts.append(f"Location: {scene.location}")
     if scene.emotion:
         parts.append(f"Visible emotion and mood: {scene.emotion}")
-    parts.extend(
-        [
+
+    if mode == "bramble":
+        parts.extend([
             settings.default_style,
             "Bramble & Grace premium cinematic 3D animated film frame",
-            "high resolution, ultra detailed, polished feature-film quality",
-            "physically believable soft lighting, global illumination, cinematic depth of field, natural lens perspective, detailed textures",
-            "low-stimulation children's scene, soft natural color palette",
-            "no written words, logos, captions or watermarks in image",
-        ]
-    )
+            "high resolution, polished feature-film quality, physically believable soft lighting, global illumination",
+            "low-stimulation children's scene, soft natural color palette, no written words, logos, captions or watermarks",
+        ])
+    elif mode == "bible":
+        parts.extend([
+            "high resolution, premium cinematic live-action frame, realistic textures, natural skin and fabric, volumetric atmosphere where appropriate",
+            "serious reverent tone without horror, kitsch, fantasy glow, or church-decoration aesthetics",
+        ])
+    else:
+        parts.extend([
+            "high resolution, polished cinematic frame, realistic composition, detailed textures, professional lighting",
+            "no written words, logos, captions or watermarks unless explicitly requested by the script",
+        ])
+
     return ", ".join(x for x in parts if x)
 
 
@@ -343,16 +404,17 @@ async def plan_scenes(request: ProjectCreate) -> list[Scene]:
     if not items:
         return []
     try:
-        annotations = await _annotate(items, request.language)
+        annotations = await _annotate(items, request.language, request.project_mode)
         by_num = {int(x.get("scene_number", 0)): x for x in annotations if isinstance(x, dict)}
     except Exception:
         by_num = {}
+
     assets = load_assets()
     allowed_chars = {a.name for a in assets if a.type == "character"}
     allowed_locations = {a.name for a in assets if a.type == "location"}
     scenes: list[Scene] = []
     previous_chars: list[str] = []
-    previous_location = "Meadowood"
+    previous_location = "Meadowood" if request.project_mode == "bramble" else ""
 
     for i, item in enumerate(items, 1):
         narration = item["text"]
@@ -361,27 +423,22 @@ async def plan_scenes(request: ProjectCreate) -> list[Scene]:
         fallback = _fallback(narration)
         meta = by_num.get(i, {})
 
-        if section_type == "parents":
+        if request.project_mode == "bramble" and section_type == "parents":
             chars: list[str] = []
             location = previous_location
             emotion = "calm, reassuring, reflective"
-            action = (
-                f"A peaceful wide closing view of {location} after the story events, warm soft light, gentle stillness, "
-                "subtle signs of the completed story moment, no new action, no random people, reassuring emotional closure"
-            )
-        elif section_type == "heart_lesson":
+            action = f"A peaceful wide closing view of {location or 'the established story world'}, warm soft light, gentle stillness, reassuring emotional closure"
+        elif request.project_mode == "bramble" and section_type == "heart_lesson":
             chars = previous_chars[:2]
             location = previous_location
             emotion = "warm, peaceful, reflective"
             names = ", ".join(chars) if chars else "the familiar story world"
-            action = (
-                f"A quiet reflective closing moment with {names} in {location}, calm body language, soft expressions, "
-                "gentle warm light, no new conflict, visually expressing safety, connection, and the lesson settling in"
-            )
+            action = f"A quiet reflective closing moment with {names} in {location or 'the established setting'}, calm body language, soft expressions, warm gentle light"
         else:
             explicit_chars = [name for name in recognized_names(narration, "character") if name in allowed_chars]
             meta_chars = [x for x in meta.get("characters", []) if x in allowed_chars]
             object_focus = _is_object_or_environment_focus(narration)
+
             if explicit_chars:
                 chars = explicit_chars.copy()
                 for name in meta_chars:
@@ -396,26 +453,34 @@ async def plan_scenes(request: ProjectCreate) -> list[Scene]:
             else:
                 chars = [x for x in fallback["characters"] if x in allowed_chars]
             chars = chars[:2]
+
             explicit_locations = recognized_names(narration, "location")
             location = meta.get("location") or (explicit_locations[0] if explicit_locations else fallback["location"])
-            if location not in allowed_locations:
+            if allowed_locations and location not in allowed_locations:
                 location = explicit_locations[0] if explicit_locations else previous_location
-            if not explicit_locations and not meta.get("location"):
+            if not location:
                 location = previous_location
+
             action_source = meta.get("visual_description") or meta.get("action") or fallback["action"] or narration
-            action = str(action_source)[:700]
-            emotion = str(meta.get("emotion") or fallback["emotion"] or "gentle")[:80]
+            action = str(action_source)[:900]
+            emotion = str(meta.get("emotion") or fallback["emotion"] or "gentle")[:100]
+
+            if request.project_mode == "bible" and section_type == "heart_lesson":
+                chars = []
+                emotion = "reverent, peaceful, contemplative"
+                action = f"A contemplative visual echo of the Scripture scene just described, peaceful atmosphere, room for spiritual reflection: {action}"
 
         scene = Scene(
             scene_number=i,
             narration=narration,
+            project_mode=request.project_mode,
             section_type=section_type,
             section_label=section_label,
             characters=chars,
             location=location,
             emotion=emotion,
             action=action,
-            negative_prompt=MASTER_NEGATIVE,
+            negative_prompt=BIBLE_NEGATIVE if request.project_mode == "bible" else MASTER_NEGATIVE,
         )
         scene.image_prompt = build_prompt(scene)
         scenes.append(scene)
@@ -423,4 +488,5 @@ async def plan_scenes(request: ProjectCreate) -> list[Scene]:
             previous_chars = chars.copy()
         if location:
             previous_location = location
+
     return scenes
