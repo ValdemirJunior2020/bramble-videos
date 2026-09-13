@@ -46,15 +46,19 @@ async def render_project(project_id: str, regenerate_all_images: bool = False) -
             if missing:
                 raise RuntimeError("Consistency Lock is ON. Upload approved reference images for: " + ", ".join(missing))
         project.stage = "Creating phrase-timed narration"; project.progress = 8; save_project(project)
-        narration, subtitles, _ = await build_narration_and_subtitles(
-            project.scenes,
-            project.language,
-            project.voice,
-            project.narration_style,
-            folder,
-            project.reference_voice_path,
-            project.narrator_speed,
-        )
+        previous_speed = settings.narration_speed
+        settings.narration_speed = project.narrator_speed
+        try:
+            narration, subtitles, _ = await build_narration_and_subtitles(
+                project.scenes,
+                project.language,
+                project.voice,
+                project.narration_style,
+                folder,
+                project.reference_voice_path,
+            )
+        finally:
+            settings.narration_speed = previous_speed
         project.narration_path = str(narration); project.subtitle_path = str(subtitles); save_project(project)
         images_dir = folder / "images"; images_dir.mkdir(exist_ok=True)
         for i, scene in enumerate(project.scenes, 1):
