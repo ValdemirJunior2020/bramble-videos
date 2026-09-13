@@ -20,7 +20,12 @@ class Asset(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     description: str = ""
     traits: str = ""
+    species: str = ""
+    canonical_outfit: str = ""
+    forbidden_traits: list[str] = Field(default_factory=list)
     image_paths: list[str] = Field(default_factory=list)
+    primary_image_path: str | None = None
+    identity_lock: bool = True
     approved: bool = True
     voice: str = ""
     voice_style: NarrationStyle = "Warm"
