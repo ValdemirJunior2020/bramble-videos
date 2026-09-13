@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +27,59 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def _prepare_script_language(request: ProjectCreate) -> None:
+    """Normalize Portuguese projects to natural Brazilian Portuguese before planning/TTS.
+
+    The Studio language selector controls the narration language. If pt-BR is selected
+    while the pasted script is English (or mixed English/Portuguese), feeding the raw
+    English text into a Brazilian Portuguese TTS voice produces phonetic gibberish.
+    This uses the already-local Ollama model to translate only what needs translation,
+    while preserving names, dialogue labels, headings and story structure.
+    """
+    if request.language != "pt-BR":
+        return
+
+    body = {
+        "model": settings.ollama_model,
+        "stream": False,
+        "format": "json",
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Brazilian Portuguese localization editor for a children's story production tool. "
+                    "Return JSON only with one key named script. Convert the supplied script to natural Brazilian Portuguese (pt-BR). "
+                    "If any part is already natural Brazilian Portuguese, preserve it. If the script is mixed English and Portuguese, "
+                    "translate only the English parts. Never use European Portuguese. Preserve character names exactly: Bramble, Grace, Pip, Oliver, Barnaby. "
+                    "Preserve dialogue labels, paragraph order, story meaning, punctuation, Markdown emphasis, and section structure. "
+                    "Translate section headings consistently: Heart Lesson -> Lição para o Coração; "
+                    "For Parents: Why This Story Matters -> Para os Pais: Por Que Esta História é Importante. "
+                    "Do not summarize, shorten, expand, censor, rewrite the plot, or add commentary."
+                ),
+            },
+            {"role": "user", "content": request.script},
+        ],
+        "options": {"temperature": 0.05},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=240) as client:
+            response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/chat", json=body)
+            response.raise_for_status()
+            payload = json.loads(response.json()["message"]["content"])
+        translated = str(payload.get("script") or "").strip()
+        if not translated:
+            raise ValueError("empty translation")
+        request.script = translated
+    except Exception as exc:
+        raise HTTPException(
+            503,
+            "Português Brasileiro was selected, but the script could not be prepared in pt-BR. "
+            "Make sure Ollama is running, then try Plan Episode again. The render was stopped to prevent garbled audio.",
+        ) from exc
+
 
 @app.get("/api/health")
 async def health():
@@ -63,13 +117,16 @@ async def health():
         pass
     return {"status": "ok", "ollama": ollama, "ollama_gpu_vram_bytes": ollama_vram, "comfyui": comfyui, "comfy_device": comfy_device, "comfy_vram_total_bytes": comfy_vram_total, "chatterbox": chatterbox, "ffmpeg_encoder": await detect_encoder(), "storage": str(settings.storage_path.resolve())}
 
+
 @app.get("/api/voices")
 async def voices():
     return [voice.model_dump() for voice in await list_sapi_voices()]
 
+
 @app.get("/api/assets")
 def assets():
     return [asset.model_dump() for asset in load_assets()]
+
 
 @app.post("/api/assets")
 async def upload_asset(name: str = Form(...), asset_type: str = Form(...), aliases: str = Form(""), description: str = Form(""), traits: str = Form(""), file: UploadFile = File(...)):
@@ -79,6 +136,7 @@ async def upload_asset(name: str = Form(...), asset_type: str = Form(...), alias
         return (await add_reference(name, asset_type, file, aliases, description, traits)).model_dump()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
 
 @app.patch("/api/assets/{asset_id}/voice")
 def set_asset_voice(asset_id: str, update: AssetVoiceUpdate):
@@ -90,11 +148,13 @@ def set_asset_voice(asset_id: str, update: AssetVoiceUpdate):
         raise HTTPException(404, "Character not found")
     return asset.model_dump()
 
+
 @app.delete("/api/assets/{asset_id}")
 def remove_asset(asset_id: str):
     if not delete_asset(asset_id):
         raise HTTPException(404, "Asset not found")
     return {"ok": True}
+
 
 @app.post("/api/uploads")
 async def upload_file(file: UploadFile = File(...)):
@@ -106,8 +166,10 @@ async def upload_file(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, out)
     return {"path": str(target)}
 
+
 @app.post("/api/projects")
 async def create_project(request: ProjectCreate):
+    await _prepare_script_language(request)
     scenes = await plan_scenes(request)
     project = Project(
         id=uuid4().hex,
@@ -143,12 +205,14 @@ async def create_project(request: ProjectCreate):
     save_project(project)
     return project.model_dump()
 
+
 @app.get("/api/projects/{project_id}")
 def get_project(project_id: str):
     try:
         return load_project(project_id).model_dump()
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
+
 
 @app.patch("/api/projects/{project_id}/scenes/{scene_number}")
 def update_scene(project_id: str, scene_number: int, update: SceneUpdate):
@@ -167,6 +231,7 @@ def update_scene(project_id: str, scene_number: int, update: SceneUpdate):
     save_project(project)
     return scene.model_dump()
 
+
 @app.post("/api/projects/{project_id}/scenes/{scene_number}/regenerate")
 async def regenerate_scene(project_id: str, scene_number: int):
     project = load_project(project_id)
@@ -179,6 +244,7 @@ async def regenerate_scene(project_id: str, scene_number: int):
     save_project(project)
     return scene.model_dump()
 
+
 @app.get("/api/projects/{project_id}/scenes/{scene_number}/image")
 def scene_image(project_id: str, scene_number: int):
     project = load_project(project_id)
@@ -189,6 +255,7 @@ def scene_image(project_id: str, scene_number: int):
     if not path.exists():
         raise HTTPException(404, "Scene image not ready")
     return FileResponse(path)
+
 
 @app.post("/api/projects/{project_id}/render")
 async def render(project_id: str, request: RenderRequest):
@@ -201,12 +268,14 @@ async def render(project_id: str, request: RenderRequest):
         raise HTTPException(409, str(exc))
     return {"ok": True}
 
+
 @app.get("/api/projects/{project_id}/subtitles")
 def subtitles(project_id: str):
     project = load_project(project_id)
     if not project.subtitle_path or not Path(project.subtitle_path).exists():
         raise HTTPException(404, "Subtitles not ready")
     return FileResponse(project.subtitle_path, media_type="application/x-subrip", filename=f"{project.title}.srt")
+
 
 @app.get("/api/projects/{project_id}/video")
 def video(project_id: str):
