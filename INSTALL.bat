@@ -60,14 +60,32 @@ if not exist "backend\.venv\Scripts\python.exe" (
 if not exist "backend\.venv\Scripts\python.exe" goto :fail
 
 echo.
-echo [4/8] Installing backend packages...
+echo [4/8] Installing backend packages and Brazilian Portuguese voice...
 "backend\.venv\Scripts\python.exe" -m pip install --upgrade pip >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail
 "backend\.venv\Scripts\python.exe" -m pip install -r "backend\requirements.txt" >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail
 "backend\.venv\Scripts\python.exe" -c "import fastapi, uvicorn, httpx, pydantic, PIL" >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail
-echo [OK] Backend packages verified
+if not exist "backend\.venv\Scripts\piper.exe" (
+  echo [ERROR] Piper TTS was not installed correctly.
+  goto :fail
+)
+if not exist "storage" mkdir "storage"
+if not exist "storage\voices" mkdir "storage\voices"
+if not exist "storage\voices\piper" mkdir "storage\voices\piper"
+if not exist "storage\voices\piper\pt_BR-faber-medium.onnx" (
+  echo Downloading Brazilian Portuguese pt-BR voice. This happens only once...
+  echo Teste de voz em portugues brasileiro.| "backend\.venv\Scripts\piper.exe" --model pt_BR-faber-medium --data-dir "storage\voices\piper" --download-dir "storage\voices\piper" --output_file "storage\voices\piper\ptbr-install-test.wav" >> "%LOG%" 2>&1
+  if errorlevel 1 (
+    echo [ERROR] Brazilian Portuguese voice download failed. See install.log.
+    goto :fail
+  )
+  if exist "storage\voices\piper\ptbr-install-test.wav" del /q "storage\voices\piper\ptbr-install-test.wav" >nul 2>nul
+) else (
+  echo [SKIP] Brazilian Portuguese voice already downloaded
+)
+echo [OK] Backend packages and pt-BR voice verified
 
 echo.
 echo [5/8] Installing expressive Chatterbox voice service...
@@ -138,7 +156,7 @@ echo [8/8] Running code validation...
 call TEST.bat /quiet >> "%LOG%" 2>&1
 if errorlevel 1 goto :fail
 if not exist "backend\.venv\Scripts\python.exe" goto :fail
-if not exist "chatterbox_service\.venv\Scripts\python.exe" goto :fail
+if not exist "backend\.venv\Scripts\piper.exe" goto :fail
 if not exist "frontend\node_modules\.bin\vite.cmd" goto :fail
 
 > ".bramble-installed" echo Installed %date% %time%
@@ -147,6 +165,7 @@ echo ============================================================
 echo INSTALL COMPLETE - EVERYTHING VERIFIED
 echo ============================================================
 echo Backend Python     : FOUND
+echo PT-BR Piper Voice  : FOUND
 echo Chatterbox Voice   : FOUND
 echo Frontend Vite      : FOUND
 echo Marker             : .bramble-installed
