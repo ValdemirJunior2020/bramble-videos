@@ -5,9 +5,12 @@ import json
 import re
 import shutil
 import sys
+import unicodedata
+import wave
 from pathlib import Path
 
 import httpx
+from piper import PiperVoice
 
 from .assets import find_asset
 from .config import settings
@@ -31,6 +34,8 @@ REFLECTION_AUDIO = {
 }
 SPEECH_VERBS = "said|asked|replied|answered|whispered|shouted|cried|called|squeaked|murmured|laughed|exclaimed|yelled|spoke"
 QUOTE_PATTERN = re.compile(r'[“\"]([^”\"]+)[”\"]')
+
+_PIPER_PTBR_VOICE: PiperVoice | None = None
 
 
 def _ps_escape(value: str) -> str:
@@ -176,14 +181,46 @@ def _piper_model_paths() -> tuple[Path, Path]:
     return model, config
 
 
+def _clean_tts_text(text: str) -> str:
+    """Return safe Unicode for local TTS without corrupting normal pt-BR accents."""
+    value = unicodedata.normalize("NFC", str(text)).replace("\ufeff", "")
+    value = "".join(" " if 0xD800 <= ord(ch) <= 0xDFFF else ch for ch in value)
+    value = re.sub(r"\s+", " ", value).strip()
+    if not value:
+        raise RuntimeError("Brazilian Portuguese narration phrase is empty after Unicode cleanup")
+    return value
+
+
+def _get_piper_ptbr_voice() -> PiperVoice:
+    global _PIPER_PTBR_VOICE
+    if _PIPER_PTBR_VOICE is None:
+        model, config = _piper_model_paths()
+        _PIPER_PTBR_VOICE = PiperVoice.load(str(model), config_path=str(config))
+    return _PIPER_PTBR_VOICE
+
+
 async def _piper_ptbr(text: str, style: str, output: Path) -> None:
+    """Synthesize pt-BR directly through Piper's Python API.
+
+    Do not pipe Portuguese through piper.exe/stdin on Windows. The console/pipe
+    decoding path can create lone Unicode surrogates, and Piper's CLI then masks
+    the original phonemizer error with 'wave.Error: # channels not specified'.
+    """
     output.parent.mkdir(parents=True, exist_ok=True)
-    model, config = _piper_model_paths()
-    cmd = [_piper_executable(), "--model", str(model), "--config", str(config), "--output_file", str(output)]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate(text.encode("utf-8"))
-    if proc.returncode != 0:
-        raise RuntimeError((err or out).decode(errors="ignore")[-3000:])
+    clean_text = _clean_tts_text(text)
+
+    def synthesize() -> None:
+        voice = _get_piper_ptbr_voice()
+        output.unlink(missing_ok=True)
+        with wave.open(str(output), "wb") as wav_file:
+            voice.synthesize_wav(clean_text, wav_file)
+
+    try:
+        await asyncio.to_thread(synthesize)
+    except Exception as exc:
+        output.unlink(missing_ok=True)
+        raise RuntimeError(f"Brazilian Portuguese Piper synthesis failed: {type(exc).__name__}: {exc}") from exc
+
     if not output.exists() or output.stat().st_size < 1000:
         raise RuntimeError("Brazilian Portuguese voice did not create valid audio")
 
