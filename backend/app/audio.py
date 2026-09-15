@@ -160,18 +160,6 @@ async def _sapi(text: str, language: str, voice: str, style: str, output: Path) 
     await _run(["powershell", "-NoProfile", "-Command", script])
 
 
-def _piper_executable() -> str:
-    found = shutil.which("piper")
-    if found:
-        return found
-    scripts = Path(sys.executable).resolve().parent
-    for name in ("piper.exe", "piper"):
-        candidate = scripts / name
-        if candidate.exists():
-            return str(candidate)
-    raise RuntimeError("Brazilian Portuguese voice engine is missing. Run INSTALL.bat again to install Piper TTS.")
-
-
 def _piper_model_paths() -> tuple[Path, Path]:
     voice_dir = settings.storage_path / "voices" / "piper"
     model = voice_dir / "pt_BR-faber-medium.onnx"
@@ -182,9 +170,11 @@ def _piper_model_paths() -> tuple[Path, Path]:
 
 
 def _clean_tts_text(text: str) -> str:
-    """Return safe Unicode for local TTS without corrupting normal pt-BR accents."""
     value = unicodedata.normalize("NFC", str(text)).replace("\ufeff", "")
     value = "".join(" " if 0xD800 <= ord(ch) <= 0xDFFF else ch for ch in value)
+    value = value.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    value = value.replace("—", " - ").replace("–", " - ")
+    value = re.sub(r"[*_#`]+", "", value)
     value = re.sub(r"\s+", " ", value).strip()
     if not value:
         raise RuntimeError("Brazilian Portuguese narration phrase is empty after Unicode cleanup")
@@ -200,12 +190,7 @@ def _get_piper_ptbr_voice() -> PiperVoice:
 
 
 async def _piper_ptbr(text: str, style: str, output: Path) -> None:
-    """Synthesize pt-BR directly through Piper's Python API.
-
-    Do not pipe Portuguese through piper.exe/stdin on Windows. The console/pipe
-    decoding path can create lone Unicode surrogates, and Piper's CLI then masks
-    the original phonemizer error with 'wave.Error: # channels not specified'.
-    """
+    """Use the stable Piper 1.3 Windows API, with 1.4 compatibility fallback."""
     output.parent.mkdir(parents=True, exist_ok=True)
     clean_text = _clean_tts_text(text)
 
@@ -213,13 +198,22 @@ async def _piper_ptbr(text: str, style: str, output: Path) -> None:
         voice = _get_piper_ptbr_voice()
         output.unlink(missing_ok=True)
         with wave.open(str(output), "wb") as wav_file:
-            voice.synthesize_wav(clean_text, wav_file)
+            # Piper 1.3 is self-contained on Windows and uses synthesize(text, wav).
+            # Newer Piper versions expose synthesize_wav instead, but 1.4 has a
+            # known Windows/eSpeak regression that can surface as '# channels not specified'.
+            if hasattr(voice, "synthesize_wav"):
+                voice.synthesize_wav(clean_text, wav_file)
+            else:
+                voice.synthesize(clean_text, wav_file)
 
     try:
         await asyncio.to_thread(synthesize)
     except Exception as exc:
         output.unlink(missing_ok=True)
-        raise RuntimeError(f"Brazilian Portuguese Piper synthesis failed: {type(exc).__name__}: {exc}") from exc
+        raise RuntimeError(
+            f"Brazilian Portuguese Piper synthesis failed: {type(exc).__name__}: {exc}. "
+            "Run INSTALL.bat once after git pull so Piper is pinned to the stable Windows 1.3.0 build."
+        ) from exc
 
     if not output.exists() or output.stat().st_size < 1000:
         raise RuntimeError("Brazilian Portuguese voice did not create valid audio")
@@ -256,10 +250,6 @@ async def synthesize_phrase(text: str, language: str, voice: str, style: str, ou
     chatterbox_available = await _chatterbox_available()
 
     if language == "pt-BR":
-        # Reliability rule: Brazilian Portuguese is rendered through the dedicated
-        # pt_BR Piper model. Chatterbox/reference cloning caused Spanish/European-
-        # Portuguese drift and sometimes unintelligible output on this pipeline.
-        # An explicitly selected installed Windows pt-BR voice may still be used.
         if voice and voice not in {"__chatterbox__", "__piper_ptbr__"}:
             try:
                 await _sapi(text, language, voice, style, raw)
