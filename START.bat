@@ -3,6 +3,12 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Bramble Videos Launcher
 
+rem Force UTF-8 for Python child processes. Piper reads narration from stdin;
+rem without these on Windows, accented pt-BR UTF-8 bytes can be decoded through
+rem the local ANSI code page and become invalid surrogate characters.
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+
 set "FRONTEND_PORT=5174"
 set "BACKEND_PORT=8010"
 set "CHATTERBOX_PORT=8001"
@@ -24,6 +30,7 @@ echo Chatterbox : http://127.0.0.1:%CHATTERBOX_PORT%
 echo ComfyUI    : http://127.0.0.1:8188
 echo Ollama     : http://127.0.0.1:11434
 echo GPU mode   : automatic GPU when available
+echo Text mode  : UTF-8 enabled for Brazilian Portuguese
 echo ============================================================
 
 set "NEEDS_INSTALL=0"
@@ -69,7 +76,7 @@ netstat -ano | findstr ":%CHATTERBOX_PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
   if exist "chatterbox_service\.venv\Scripts\python.exe" (
     echo Starting Bramble expressive voice service with TTS_DEVICE=%TTS_DEVICE%...
-    start "Bramble Chatterbox" /D "%~dp0chatterbox_service" cmd /k "set TTS_DEVICE=%TTS_DEVICE%&& .\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port %CHATTERBOX_PORT%"
+    start "Bramble Chatterbox" /D "%~dp0chatterbox_service" cmd /k "set TTS_DEVICE=%TTS_DEVICE%&& set PYTHONUTF8=1&& set PYTHONIOENCODING=utf-8&& .\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port %CHATTERBOX_PORT%"
   ) else (
     echo [WARN] Chatterbox is not installed. Run INSTALL.bat.
   )
@@ -80,9 +87,10 @@ if errorlevel 1 (
 
 netstat -ano | findstr ":%BACKEND_PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Backend" /D "%~dp0backend" cmd /k ".\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
+  start "Bramble Backend" /D "%~dp0backend" cmd /k "set PYTHONUTF8=1&& set PYTHONIOENCODING=utf-8&& .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
 ) else (
   echo [OK] Bramble backend already running on %BACKEND_PORT%
+  echo [INFO] If it was started before this UTF-8 fix, close that backend window once and run START.bat again.
 )
 
 netstat -ano | findstr ":%FRONTEND_PORT% " | findstr "LISTENING" >nul
