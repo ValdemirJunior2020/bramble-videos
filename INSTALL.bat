@@ -3,6 +3,11 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Bramble Videos - Install
 
+rem Piper on Windows must read pt-BR text as UTF-8. These variables are also
+rem inherited by every Python/Piper process launched by this installer.
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+
 set "LOG=%~dp0install.log"
 if exist ".bramble-installed" del /q ".bramble-installed" >nul 2>nul
 
@@ -95,10 +100,11 @@ if not exist "storage\voices\piper\pt_BR-faber-medium.onnx.json" (
   goto :fail
 )
 
-echo Testing Brazilian Portuguese voice...
-echo Teste de voz em portugues brasileiro.| "backend\.venv\Scripts\piper.exe" --model "storage\voices\piper\pt_BR-faber-medium.onnx" --output_file "storage\voices\piper\ptbr-install-test.wav" >> "%LOG%" 2>&1
+echo Testing Brazilian Portuguese voice with accented UTF-8 text...
+> "storage\voices\piper\ptbr-test.txt" echo Esta é uma voz em português brasileiro. Coração, crianças, paciência e atenção.
+type "storage\voices\piper\ptbr-test.txt" | "backend\.venv\Scripts\piper.exe" --model "storage\voices\piper\pt_BR-faber-medium.onnx" --config "storage\voices\piper\pt_BR-faber-medium.onnx.json" --output_file "storage\voices\piper\ptbr-install-test.wav" >> "%LOG%" 2>&1
 if errorlevel 1 (
-  echo [ERROR] Brazilian Portuguese voice test failed. See install.log.
+  echo [ERROR] Brazilian Portuguese UTF-8 voice test failed. See install.log.
   goto :fail
 )
 if not exist "storage\voices\piper\ptbr-install-test.wav" (
@@ -106,7 +112,8 @@ if not exist "storage\voices\piper\ptbr-install-test.wav" (
   goto :fail
 )
 del /q "storage\voices\piper\ptbr-install-test.wav" >nul 2>nul
-echo [OK] Backend packages and pt-BR voice verified
+del /q "storage\voices\piper\ptbr-test.txt" >nul 2>nul
+echo [OK] Backend packages and pt-BR voice verified in UTF-8 mode
 
 echo.
 echo [5/8] Installing expressive Chatterbox voice service...
