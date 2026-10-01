@@ -102,6 +102,8 @@ class WanGPService:
             job_id = data["job_id"]
             scene.generation_job_id = job_id
             scene.generation_state = "generating"
+            if on_update is not None:
+                on_update()
             while True:
                 status = await self._request("GET", f"/jobs/{job_id}", timeout=15.0)
                 scene.generation_phase = status.get("phase") or status.get("status") or "Generating"
