@@ -122,7 +122,7 @@ async def health():
         "wangp": wangp,
         "gpu": {
             "name": wangp.get("gpu_name", ""),
-            "architecture": "gfx1200" if "9060" in str(wangp.get("gpu_name", "")) else "",
+            "architecture": wangp.get("architecture") or ("gfx1200" if "9060" in str(wangp.get("gpu_name", "")) else ""),
             "vramGb": wangp.get("vram_gb", 0),
         },
         "ollama": {"available": ollama, "gpu_vram_bytes": ollama_vram},
@@ -135,12 +135,18 @@ async def health():
 
 @app.get("/api/generation/models")
 async def generation_models():
-    return {"models": await wangp_service.list_models()}
+    try:
+        return {"models": await wangp_service.list_models()}
+    except Exception as exc:
+        raise HTTPException(503, str(exc))
 
 
 @app.get("/api/generation/models/{model_type}/schema")
 async def generation_model_schema(model_type: str):
-    return await wangp_service.model_schema(model_type)
+    try:
+        return await wangp_service.model_schema(model_type)
+    except Exception as exc:
+        raise HTTPException(503, str(exc))
 
 
 @app.get("/api/voices")
