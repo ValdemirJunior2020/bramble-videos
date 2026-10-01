@@ -42,6 +42,11 @@ class GenerateRequest(BaseModel):
     references: list[str] = Field(default_factory=list)
     consistency_lock: bool = False
     output_path: str
+    image_start: str = ""
+    image_end: str = ""
+    video_source: str = ""
+    video_guide: str = ""
+    overrides: dict = Field(default_factory=dict)
 
 
 def _git_commit() -> str:
@@ -124,6 +129,68 @@ def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
     scale = {"fast": 0.65, "balanced": 1.0, "high": 1.25, "max": 1.45}.get(req.preset, 1.0)
     if steps:
         defaults["num_inference_steps"] = max(4, min(steps + 12, round(steps * scale)))
+
+    safe_override_keys = {
+        "num_inference_steps", "force_fps", "guidance_scale", "guidance2_scale",
+        "guidance3_scale", "embedded_guidance_scale", "flow_shift", "motion_amplitude",
+        "temporal_upsampling", "spatial_upsampling", "prompt_enhancer", "sample_solver",
+    }
+    for key, value in req.overrides.items():
+        if key in safe_override_keys and value not in (None, ""):
+            defaults[key] = value
+
+    def media_path(value: str) -> str:
+        if not value:
+            return ""
+        path = Path(value).expanduser().resolve()
+        if not path.exists():
+            raise RuntimeError(f"Media input was not found: {path.name}")
+        return str(path)
+
+    image_meta = (metadata.get("media_inputs") or {}).get("image") or {}
+    video_meta = (metadata.get("media_inputs") or {}).get("video") or {}
+    start = media_path(req.image_start)
+    end = media_path(req.image_end)
+    source_video = media_path(req.video_source)
+    control_video = media_path(req.video_guide)
+
+    if start:
+        if not image_meta.get("start"):
+            raise RuntimeError(f"Selected model '{model_type}' does not support start-frame image-to-video.")
+        defaults["image_start"] = start
+    if end:
+        if not image_meta.get("end"):
+            raise RuntimeError(f"Selected model '{model_type}' does not support end-frame guidance.")
+        defaults["image_end"] = end
+    if source_video:
+        if not video_meta.get("continue"):
+            raise RuntimeError(f"Selected model '{model_type}' does not support video continuation/source-video input.")
+        defaults["video_source"] = source_video
+    if control_video:
+        if not video_meta.get("control"):
+            raise RuntimeError(f"Selected model '{model_type}' does not support control-video guidance.")
+        setting_values = metadata.get("setting_values") or {}
+        prompt_values = setting_values.get("video_prompt_type") or {}
+        choice_groups = (
+            prompt_values.get("guide_preprocessing"),
+            prompt_values.get("guide_custom_choices"),
+            prompt_values.get("custom_video_selection"),
+        )
+        chosen = ""
+        for group in choice_groups:
+            if not isinstance(group, dict):
+                continue
+            for choice in group.get("choices") or []:
+                value = str(choice.get("value", "") if isinstance(choice, dict) else "")
+                if "V" in value:
+                    chosen = value
+                    break
+            if chosen:
+                break
+        if not chosen:
+            raise RuntimeError(f"Selected model '{model_type}' reports control-video capability but no compatible control mode was exposed.")
+        defaults["video_guide"] = control_video
+        defaults["video_prompt_type"] = chosen
 
     refs = [str(Path(p).resolve()) for p in req.references if Path(p).exists()]
     media = (metadata.get("media_inputs") or {}).get("image") or {}
