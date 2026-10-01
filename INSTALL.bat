@@ -51,6 +51,69 @@ if not exist ".env" (
 )
 
 echo.
+echo [WanGP] Preparing official WanGP AMD environment...
+where git >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Git is required to install WanGP.
+  goto :fail
+)
+set "WANGP_ROOT=%~dp0runtime\WanGP"
+if exist ".env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if /i "%%A"=="WANGP_ROOT" set "WANGP_ROOT=%%B"
+  )
+)
+if not "!WANGP_ROOT:~1,1!"==":" set "WANGP_ROOT=%~dp0!WANGP_ROOT!"
+if not exist "runtime" mkdir "runtime"
+
+powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController ^| Where-Object {$_.Name -match 'AMD|Radeon'} ^| Select-Object -First 1; if(-not $g){exit 2}; Write-Host '[GPU]' $g.Name; if($g.Name -match '9060'){Write-Host '[OK] RX 9060 XT detected as gfx1200 / RDNA 4'; exit 0}else{Write-Host '[WARN] AMD GPU detected but not RX 9060 XT:' $g.Name; exit 0}"
+if errorlevel 2 (
+  echo [ERROR] No AMD Radeon GPU was detected by Windows.
+  goto :fail
+)
+
+if not exist "!WANGP_ROOT!\shared\api.py" (
+  echo Cloning official WanGP...
+  git clone https://github.com/deepbeepmeep/Wan2GP.git "!WANGP_ROOT!" >> "%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+) else (
+  echo [SKIP] Existing WanGP source kept untouched
+)
+
+if not exist "!WANGP_ROOT!\wan2gp-env\Scripts\python.exe" (
+  py -3.11 -V >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Python 3.11 is required for the WanGP AMD environment.
+    echo Install Python 3.11, then run INSTALL.bat again.
+    goto :fail
+  )
+  py -3.11 -m venv "!WANGP_ROOT!\wan2gp-env" >> "%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+)
+set "WANGP_PYTHON=!WANGP_ROOT!\wan2gp-env\Scripts\python.exe"
+"!WANGP_PYTHON!" -m pip install --upgrade pip wheel setuptools >> "%LOG%" 2>&1
+if errorlevel 1 goto :fail
+
+echo Installing official RDNA4 gfx120X ROCm/TheRock PyTorch stack...
+"!WANGP_PYTHON!" -m pip install --pre torch torchvision torchaudio "rocm[devel]" --index-url https://rocm.nightlies.amd.com/v2/gfx120X-all/ >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [ERROR] WanGP AMD gfx120X PyTorch/ROCm install failed. See install.log.
+  goto :fail
+)
+"!WANGP_PYTHON!" -m pip install -r "!WANGP_ROOT!\requirements.txt" >> "%LOG%" 2>&1
+if errorlevel 1 goto :fail
+"!WANGP_PYTHON!" -m pip install fastapi uvicorn >> "%LOG%" 2>&1
+if errorlevel 1 goto :fail
+
+echo Verifying WanGP API and AMD GPU acceleration...
+"!WANGP_PYTHON!" -c "import sys,torch; sys.path.insert(0,r'!WANGP_ROOT!'); from shared.api import init; print('torch',torch.__version__); print('hip',getattr(torch.version,'hip',None)); print('gpu',torch.cuda.is_available()); print('device',torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'); raise SystemExit(0 if torch.cuda.is_available() else 3)" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [ERROR] ROCm PyTorch cannot see the AMD GPU. Run GPU_CHECK.bat for details.
+  goto :fail
+)
+echo [OK] WanGP shared.api and ROCm GPU verified
+
+echo.
 echo [3/8] Preparing backend Python environment...
 if exist "backend\.venv" if not exist "backend\.venv\Scripts\python.exe" (
   echo [WARN] Broken backend virtual environment found. Rebuilding it...
