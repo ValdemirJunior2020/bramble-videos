@@ -23,7 +23,7 @@ if exist ".env" (
   )
 )
 if not "%WANGP_ROOT:~1,1%"==":" set "WANGP_ROOT=%~dp0%WANGP_ROOT%"
-set "WANGP_PYTHON=%WANGP_ROOT%\wan2gp-env\Scripts\python.exe"
+set "WANGP_PYTHON=%WANGP_ROOT%\env_venv\Scripts\python.exe"
 
 echo ============================================================
 echo BRAMBLE VIDEOS - WANGP CINEMATIC STUDIO
