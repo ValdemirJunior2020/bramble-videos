@@ -15,12 +15,13 @@ from .assets import add_reference, delete_asset, load_assets, set_primary_refere
 from .audio import list_sapi_voices
 from .comfy import generate_scene_image
 from .config import settings
-from .models import AssetVoiceUpdate, Project, ProjectCreate, RenderRequest, SceneUpdate
-from .pipeline import load_project, project_dir, save_project, start_render
+from .models import AssetVoiceUpdate, Project, ProjectCreate, RenderRequest, SceneRegenerateRequest, SceneUpdate
+from .pipeline import cancel_render, load_project, project_dir, save_project, start_render
 from .planner import plan_scenes, build_prompt
 from .video import detect_encoder
+from .generation.wangp import wangp_service
 
-app = FastAPI(title="Bramble Videos", version="1.3.1")
+app = FastAPI(title="Bramble Videos", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
@@ -95,27 +96,51 @@ async def _prepare_script_language(request: ProjectCreate) -> None:
         raise HTTPException(503, "Português Brasileiro was selected, but the non-Portuguese script could not be translated to pt-BR. Make sure Ollama is running and try again.") from exc
 
 
+@app.get("/api/system/health")
 @app.get("/api/health")
 async def health():
-    ollama = False; ollama_vram = 0; comfyui = False; comfy_device = ""; comfy_vram_total = 0; chatterbox = False
+    ollama = False
+    ollama_vram = 0
+    chatterbox = False
     try:
         async with httpx.AsyncClient(timeout=2) as client:
-            response = await client.get(f"{settings.ollama_url.rstrip('/')}/api/ps"); ollama = response.status_code == 200
-            if ollama: ollama_vram = sum(int(model.get("size_vram") or 0) for model in response.json().get("models", []))
-    except Exception: pass
-    try:
-        async with httpx.AsyncClient(timeout=2) as client:
-            response = await client.get(f"{settings.comfyui_url.rstrip('/')}/system_stats"); comfyui = response.status_code == 200
-            if comfyui:
-                devices = response.json().get("devices", [])
-                if devices:
-                    device = devices[0]; comfy_device = str(device.get("name") or device.get("type") or "GPU"); comfy_vram_total = int(device.get("vram_total") or 0)
-    except Exception: pass
+            response = await client.get(f"{settings.ollama_url.rstrip('/')}/api/ps")
+            ollama = response.status_code == 200
+            if ollama:
+                ollama_vram = sum(int(model.get("size_vram") or 0) for model in response.json().get("models", []))
+    except Exception:
+        pass
     try:
         async with httpx.AsyncClient(timeout=2) as client:
             chatterbox = (await client.get(f"{settings.chatterbox_url.rstrip('/')}/health")).status_code == 200
-    except Exception: pass
-    return {"status": "ok", "ollama": ollama, "ollama_gpu_vram_bytes": ollama_vram, "comfyui": comfyui, "comfy_device": comfy_device, "comfy_vram_total_bytes": comfy_vram_total, "chatterbox": chatterbox, "ffmpeg_encoder": await detect_encoder(), "storage": str(settings.storage_path.resolve())}
+    except Exception:
+        pass
+    wangp = await wangp_service.health()
+    encoder = await detect_encoder()
+    return {
+        "status": "ok",
+        "wangp": wangp,
+        "gpu": {
+            "name": wangp.get("gpu_name", ""),
+            "architecture": "gfx1200" if "9060" in str(wangp.get("gpu_name", "")) else "",
+            "vramGb": wangp.get("vram_gb", 0),
+        },
+        "ollama": {"available": ollama, "gpu_vram_bytes": ollama_vram},
+        "chatterbox": {"available": chatterbox},
+        "ffmpeg": {"available": bool(encoder), "encoder": encoder},
+        "amf": {"available": encoder == "h264_amf"},
+        "ffmpeg_encoder": encoder,
+    }
+
+
+@app.get("/api/generation/models")
+async def generation_models():
+    return {"models": await wangp_service.list_models()}
+
+
+@app.get("/api/generation/models/{model_type}/schema")
+async def generation_model_schema(model_type: str):
+    return await wangp_service.model_schema(model_type)
 
 
 @app.get("/api/voices")
@@ -174,7 +199,7 @@ async def create_project(request: ProjectCreate):
         id=uuid4().hex, title=request.title, script=request.script, project_mode=request.project_mode, language=request.language,
         aspect=request.aspect, custom_width=request.custom_width, custom_height=request.custom_height, voice=request.voice,
         narration_style=request.narration_style, narrator_speed=request.narrator_speed, reference_voice_path=request.reference_voice_path,
-        consistency_lock=request.consistency_lock, generate_images=request.generate_images, reference_denoise=request.reference_denoise,
+        consistency_lock=request.consistency_lock, generate_images=request.generate_images, generation_engine=request.generation_engine, generation_model=request.generation_model, generation_preset=request.generation_preset, reference_denoise=request.reference_denoise,
         transition=request.transition, background_music_path=request.background_music_path, music_volume=request.music_volume,
         subtitles_enabled=request.subtitles_enabled, subtitle_font=request.subtitle_font, subtitle_size=request.subtitle_size,
         subtitle_position=request.subtitle_position, subtitle_color=request.subtitle_color, subtitle_stroke_color=request.subtitle_stroke_color,
@@ -203,11 +228,54 @@ def update_scene(project_id: str, scene_number: int, update: SceneUpdate):
 
 
 @app.post("/api/projects/{project_id}/scenes/{scene_number}/regenerate")
-async def regenerate_scene(project_id: str, scene_number: int):
-    project = load_project(project_id); scene = next((item for item in project.scenes if item.scene_number == scene_number), None)
-    if not scene: raise HTTPException(404, "Scene not found")
-    out = project_dir(project_id) / "images" / f"scene-{scene.scene_number:03d}.png"; await generate_scene_image(project, scene, out)
-    scene.image_path = str(out); save_project(project); return scene.model_dump()
+async def regenerate_scene(project_id: str, scene_number: int, request: SceneRegenerateRequest = SceneRegenerateRequest()):
+    project = load_project(project_id)
+    scene = next((item for item in project.scenes if item.scene_number == scene_number), None)
+    if not scene:
+        raise HTTPException(404, "Scene not found")
+    if project.generation_engine == "wangp":
+        from .generation.wangp import WanGPError
+        try:
+            scene_dir = project_dir(project_id) / "scenes" / f"scene-{scene.scene_number:03d}"
+            outputs = await wangp_service.generate_scene(project, scene, scene_dir, seed=scene.seed, new_seed=request.new_seed)
+            clip = scene_dir / "clip.mp4"
+            if len(outputs) == 1 and outputs[0].resolve() != clip.resolve():
+                clip.write_bytes(outputs[0].read_bytes())
+            elif len(outputs) > 1:
+                from .video import concat_clips
+                await concat_clips(outputs, clip, await detect_encoder())
+            scene.clip_path = str(clip)
+            scene.generation_state = "complete"
+            save_project(project)
+            return scene.model_dump()
+        except WanGPError as exc:
+            scene.generation_state = "failed"
+            save_project(project)
+            raise HTTPException(409, str(exc))
+    out = project_dir(project_id) / "images" / f"scene-{scene.scene_number:03d}.png"
+    await generate_scene_image(project, scene, out)
+    scene.image_path = str(out)
+    save_project(project)
+    return scene.model_dump()
+
+
+@app.get("/api/projects/{project_id}/scenes/{scene_number}/clip")
+def scene_clip(project_id: str, scene_number: int):
+    project = load_project(project_id)
+    scene = next((item for item in project.scenes if item.scene_number == scene_number), None)
+    if not scene or not scene.clip_path or not Path(scene.clip_path).exists():
+        raise HTTPException(404, "Scene clip not ready")
+    return FileResponse(scene.clip_path, media_type="video/mp4")
+
+
+@app.get("/api/projects/{project_id}/scenes/{scene_number}/preview")
+def scene_preview(project_id: str, scene_number: int):
+    project = load_project(project_id)
+    scene = next((item for item in project.scenes if item.scene_number == scene_number), None)
+    if not scene or not scene.preview_path or not Path(scene.preview_path).exists():
+        raise HTTPException(404, "Preview not ready")
+    path = Path(scene.preview_path)
+    return FileResponse(path, media_type="video/mp4" if path.suffix.lower() == ".mp4" else "image/png")
 
 
 @app.get("/api/projects/{project_id}/scenes/{scene_number}/image")
@@ -224,6 +292,15 @@ async def render(project_id: str, request: RenderRequest):
     try: load_project(project_id); start_render(project_id, request.regenerate_all_images)
     except FileNotFoundError: raise HTTPException(404, "Project not found")
     except RuntimeError as exc: raise HTTPException(409, str(exc))
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/cancel")
+async def cancel_project(project_id: str):
+    try:
+        await cancel_render(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
     return {"ok": True}
 
 
