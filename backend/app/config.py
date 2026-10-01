@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     comfyui_url: str = "http://127.0.0.1:8188"
     comfyui_path: str = r"C:\Users\nobody\Documents\comfy\ComfyUI"
     comfyui_checkpoint: str = ""
+    wangp_root: str = str(REPO_ROOT / "runtime" / "WanGP")
+    wangp_bridge_url: str = "http://127.0.0.1:8020"
+    wangp_default_model: str = ""
+    wangp_memory_profile: int = 4
+    wangp_attention: str = "sdpa"
     chatterbox_url: str = "http://127.0.0.1:8001"
     storage_root: str = str(REPO_ROOT / "storage")
     narration_speed: float = 0.90
