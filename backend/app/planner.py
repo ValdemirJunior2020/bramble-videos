@@ -396,6 +396,14 @@ def build_prompt(scene: Scene) -> str:
             "no written words, logos, captions or watermarks unless explicitly requested by the script",
         ])
 
+    if scene.section_type in {"heart_lesson", "parents"}:
+        parts.append("VIDEO MOTION: restrained natural subject movement, subtle environmental motion, slow cinematic push-in, steady camera, no sudden action")
+    elif any(word in primary_action.lower() for word in ("walk", "run", "follow", "travel", "move", "ride")):
+        parts.append("VIDEO MOTION: natural continuous character motion with a gentle tracking shot, coherent screen direction, believable secondary motion")
+    else:
+        parts.append("VIDEO MOTION: subtle lifelike subject movement and environmental motion, slow dolly or gentle pan chosen to support the action, cinematic depth of field")
+    parts.append("CONTINUITY: preserve character identity, species, clothing, colors, location, lighting and art style for the entire moving shot; no morphing, teleporting or identity swaps")
+
     return ", ".join(x for x in parts if x)
 
 
