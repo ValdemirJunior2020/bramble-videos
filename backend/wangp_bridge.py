@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import secrets
 import subprocess
 import sys
 import threading
@@ -103,7 +104,8 @@ def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
     defaults["resolution"] = req.resolution
     defaults["duration_seconds"] = float(req.duration_seconds)
     defaults["video_length"] = f"{float(req.duration_seconds):.2f}s"
-    defaults["seed"] = int(req.seed)
+    resolved_seed = int(req.seed) if int(req.seed) >= 0 else secrets.randbelow(2_147_483_647)
+    defaults["seed"] = resolved_seed
     defaults["override_profile"] = int(os.environ.get("WANGP_MEMORY_PROFILE", "4"))
     defaults["override_attention"] = os.environ.get("WANGP_ATTENTION", "sdpa")
 
