@@ -72,7 +72,7 @@ class WanGPService:
                     refs.append(str(path.resolve()))
         return refs[:5]
 
-    async def generate_scene(self, project: Project, scene: Scene, out_dir: Path, *, seed: int | None = None, new_seed: bool = False) -> list[Path]:
+    async def generate_scene(self, project: Project, scene: Scene, out_dir: Path, *, seed: int | None = None, new_seed: bool = False, on_update=None) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
         durations = split_duration(scene.duration_seconds)
         outputs: list[Path] = []
@@ -107,6 +107,8 @@ class WanGPService:
                 scene.preview_path = status.get("preview_path") or scene.preview_path
                 if status.get("seed") is not None:
                     scene.seed = int(status["seed"])
+                if on_update is not None:
+                    on_update()
                 if status["state"] in {"complete", "failed", "cancelled"}:
                     if status["state"] != "complete":
                         scene.generation_state = status["state"]
