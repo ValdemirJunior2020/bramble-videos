@@ -106,6 +106,8 @@ class WanGPService:
                 status = await self._request("GET", f"/jobs/{job_id}", timeout=15.0)
                 scene.generation_phase = status.get("phase") or status.get("status") or "Generating"
                 scene.generation_progress = int(status.get("progress") or 0)
+                scene.generation_current_step = status.get("current_step")
+                scene.generation_total_steps = status.get("total_steps")
                 scene.preview_path = status.get("preview_path") or scene.preview_path
                 if status.get("seed") is not None:
                     scene.seed = int(status["seed"])
