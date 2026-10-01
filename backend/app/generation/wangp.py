@@ -81,6 +81,7 @@ class WanGPService:
 
     async def generate_scene(self, project: Project, scene: Scene, out_dir: Path, *, seed: int | None = None, new_seed: bool = False, on_update=None) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
+        scene.approved = False
         durations = split_duration(scene.duration_seconds)
         outputs: list[Path] = []
         refs = self._references(scene)
