@@ -63,7 +63,13 @@ async def _generate_wangp_scene(project: Project, scene, scene_index: int, total
         project.progress = min(82, 15 + round(62 * ((scene_index - 1) + scene.generation_progress / 100) / max(1, total)))
         save_project(project)
 
-    outputs = await wangp_service.generate_scene(project, scene, scene_dir, on_update=persist)
+    try:
+        outputs = await wangp_service.generate_scene(project, scene, scene_dir, on_update=persist)
+    except Exception:
+        scene.generation_state = "failed"
+        scene.generation_phase = "Failed"
+        save_project(project)
+        raise
     if len(outputs) == 1:
         produced = outputs[0]
         if produced.resolve() != final_clip.resolve():
