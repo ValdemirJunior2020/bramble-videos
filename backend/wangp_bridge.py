@@ -111,6 +111,15 @@ def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
     defaults["override_profile"] = int(os.environ.get("WANGP_MEMORY_PROFILE", "4"))
     defaults["override_attention"] = os.environ.get("WANGP_ATTENTION", "sdpa")
 
+    if req.preset == "max":
+        try:
+            import torch
+            total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3 if torch.cuda.is_available() else 0
+        except Exception:
+            total_gb = 0
+        if total_gb < 15.0:
+            raise RuntimeError("Maximum Local Quality requires at least 15 GB of detected VRAM. Choose High Quality or Balanced Cinematic.")
+
     steps = int(defaults.get("num_inference_steps") or 0)
     scale = {"fast": 0.65, "balanced": 1.0, "high": 1.25, "max": 1.45}.get(req.preset, 1.0)
     if steps:
@@ -177,6 +186,19 @@ def _run_generation(job_id: str, req: GenerateRequest):
                         path = preview_dir / f"{job_id}.mp4"; path.write_bytes(preview.video); _set_job(job_id, preview_path=str(path))
                     elif getattr(preview, "image", None) is not None:
                         path = preview_dir / f"{job_id}.png"; preview.image.save(path); _set_job(job_id, preview_path=str(path))
+                def on_stream(self, message):
+                    text = str(getattr(message, "text", "") or "").strip()
+                    if not text:
+                        return
+                    lowered = text.lower()
+                    if "download" in lowered:
+                        _set_job(job_id, phase="Downloading model", status=text)
+                    elif any(word in lowered for word in ("loading", "checkpoint", "model")):
+                        _set_job(job_id, status=text)
+                def on_info(self, text):
+                    value = str(text or "").strip()
+                    if value:
+                        _set_job(job_id, status=value)
                 def on_error(self, error):
                     _set_job(job_id, error=str(getattr(error, "message", error)))
 
