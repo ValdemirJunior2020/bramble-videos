@@ -120,6 +120,10 @@ class WanGPService:
             produced = Path(status.get("output_path") or target)
             if not produced.exists():
                 raise WanGPError("WanGP reported success but the generated video file was not found.")
+            payload["seed"] = scene.seed
+            (out_dir / f"settings-{shot_index:02d}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            if base_seed is None or base_seed < 0:
+                base_seed = scene.seed
             outputs.append(produced)
         scene.generation_state = "complete"
         scene.generation_progress = 100
