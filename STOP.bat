@@ -1,11 +1,18 @@
 @echo off
 setlocal EnableExtensions
-echo Stopping Bramble-owned local services...
-for %%P in (5174 8010 8020) do (
-  for /f "tokens=5" %%A in ('netstat -aon ^| findstr ":%%P " ^| findstr "LISTENING"') do (
-    taskkill /PID %%A /F >nul 2>nul
+cd /d "%~dp0"
+set "PID_DIR=%~dp0runtime\pids"
+
+echo Stopping only processes started by this Bramble launcher...
+for %%S in (frontend backend wangp chatterbox) do (
+  if exist "%PID_DIR%\%%S.pid" (
+    set /p BRAMBLE_PID=<"%PID_DIR%\%%S.pid"
+    call taskkill /PID %%BRAMBLE_PID%% /T /F >nul 2>nul
+    del /q "%PID_DIR%\%%S.pid" >nul 2>nul
+    echo [STOPPED] %%S
+  ) else (
+    echo [SKIP] %%S was not started by this Bramble launch.
   )
 )
-echo Bramble frontend, backend and WanGP bridge stopped.
-echo Shared Ollama and Chatterbox were left running to avoid interrupting other local projects.
+echo Shared Ollama and any pre-existing services were left untouched.
 pause
