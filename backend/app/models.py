@@ -57,6 +57,13 @@ class Scene(BaseModel):
     end_seconds: float = 0.0
     duration_seconds: float = 0.0
     image_path: str | None = None
+    clip_path: str | None = None
+    preview_path: str | None = None
+    seed: int = -1
+    generation_state: Literal["pending", "generating", "complete", "failed", "cancelled"] = "pending"
+    generation_progress: int = 0
+    generation_phase: str = ""
+    generation_job_id: str | None = None
 
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=180)
@@ -72,6 +79,9 @@ class ProjectCreate(BaseModel):
     reference_voice_path: str | None = None
     consistency_lock: bool = True
     generate_images: bool = True
+    generation_engine: Literal["wangp", "comfy"] = "wangp"
+    generation_model: str = ""
+    generation_preset: Literal["fast", "balanced", "high", "max"] = "balanced"
     reference_denoise: float | None = Field(default=None, ge=0.15, le=0.95)
     transition: Literal["Gentle Fade", "Cut", "Subtle Zoom"] = "Gentle Fade"
     background_music_path: str | None = None
@@ -117,6 +127,9 @@ class Project(BaseModel):
     reference_voice_path: str | None = None
     consistency_lock: bool = True
     generate_images: bool = True
+    generation_engine: Literal["wangp", "comfy"] = "wangp"
+    generation_model: str = ""
+    generation_preset: Literal["fast", "balanced", "high", "max"] = "balanced"
     reference_denoise: float | None = None
     transition: str = "Gentle Fade"
     background_music_path: str | None = None
@@ -133,7 +146,7 @@ class Project(BaseModel):
     watermark_opacity: float = 0.75
     watermark_width_percent: int = 14
     scenes: list[Scene] = Field(default_factory=list)
-    state: Literal["planned", "rendering", "complete", "failed"] = "planned"
+    state: Literal["planned", "rendering", "complete", "failed", "cancelled"] = "planned"
     progress: int = 0
     stage: str = "Planned"
     error: str | None = None
@@ -152,6 +165,9 @@ class SceneUpdate(BaseModel):
 
 class RenderRequest(BaseModel):
     regenerate_all_images: bool = False
+
+class SceneRegenerateRequest(BaseModel):
+    new_seed: bool = False
 
 class VoiceInfo(BaseModel):
     name: str
