@@ -60,7 +60,7 @@ class WanGPService:
         refs: list[str] = []
         for name in scene.characters:
             asset = find_asset(name)
-            if not asset or not asset.identity_lock:
+            if not asset or not asset.identity_lock or not asset.approved:
                 continue
             ordered = []
             if asset.primary_image_path:
@@ -71,6 +71,13 @@ class WanGPService:
                 if path.exists() and str(path.resolve()) not in refs:
                     refs.append(str(path.resolve()))
         return refs[:5]
+
+    def _has_locked_characters(self, scene: Scene) -> bool:
+        for name in scene.characters:
+            asset = find_asset(name)
+            if asset is None or (asset.identity_lock and asset.approved):
+                return True
+        return False
 
     async def generate_scene(self, project: Project, scene: Scene, out_dir: Path, *, seed: int | None = None, new_seed: bool = False, on_update=None) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -93,7 +100,7 @@ class WanGPService:
                 "seed": base_seed if base_seed is not None else -1,
                 "preset": project.generation_preset,
                 "references": refs,
-                "consistency_lock": project.consistency_lock and bool(scene.characters),
+                "consistency_lock": project.consistency_lock and self._has_locked_characters(scene),
                 "output_path": str(target.resolve()),
             }
             (out_dir / f"prompt-{shot_index:02d}.json").write_text(json.dumps({"prompt": prompt, "negative_prompt": scene.negative_prompt, "references": refs}, indent=2), encoding="utf-8")
