@@ -16,7 +16,7 @@ from .audio import list_sapi_voices
 from .comfy import generate_scene_image
 from .config import settings
 from .models import AssetVoiceUpdate, Project, ProjectCreate, RenderRequest, SceneRegenerateRequest, SceneUpdate
-from .pipeline import cancel_render, load_project, project_dir, save_project, start_render
+from .pipeline import cancel_render, is_render_active, load_project, project_dir, save_project, start_render
 from .planner import plan_scenes, build_prompt
 from .video import detect_encoder
 from .generation.wangp import wangp_service
@@ -215,10 +215,35 @@ async def create_project(request: ProjectCreate):
     save_project(project); return project.model_dump()
 
 
+@app.get("/api/projects")
+def list_projects():
+    items = []
+    settings.projects_path.mkdir(parents=True, exist_ok=True)
+    for path in settings.projects_path.glob("*/project.json"):
+        try:
+            project = Project.model_validate_json(path.read_text(encoding="utf-8"))
+            items.append({
+                "id": project.id,
+                "title": project.title,
+                "state": project.state,
+                "progress": project.progress,
+                "stage": project.stage,
+                "render_active": is_render_active(project.id),
+                "updated_at": path.stat().st_mtime,
+            })
+        except Exception:
+            continue
+    return sorted(items, key=lambda item: item["updated_at"], reverse=True)
+
+
 @app.get("/api/projects/{project_id}")
 def get_project(project_id: str):
-    try: return load_project(project_id).model_dump()
-    except FileNotFoundError: raise HTTPException(404, "Project not found")
+    try:
+        data = load_project(project_id).model_dump()
+        data["render_active"] = is_render_active(project_id)
+        return data
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
 
 
 @app.patch("/api/projects/{project_id}/scenes/{scene_number}")
