@@ -229,6 +229,11 @@ async def render_project(project_id: str, regenerate_all_images: bool = False) -
 TASKS: dict[str, asyncio.Task] = {}
 
 
+def is_render_active(project_id: str) -> bool:
+    task = TASKS.get(project_id)
+    return bool(task and not task.done())
+
+
 def start_render(project_id: str, regenerate_all_images: bool = False) -> None:
     existing = TASKS.get(project_id)
     if existing and not existing.done():
