@@ -116,10 +116,12 @@ async def health():
     except Exception:
         pass
     wangp = await wangp_service.health()
+    wangp_public = dict(wangp)
+    wangp_public.pop("root", None)
     encoder = await detect_encoder()
     return {
         "status": "ok",
-        "wangp": wangp,
+        "wangp": wangp_public,
         "gpu": {
             "name": wangp.get("gpu_name", ""),
             "architecture": wangp.get("architecture") or ("gfx1200" if "9060" in str(wangp.get("gpu_name", "")) else ""),
