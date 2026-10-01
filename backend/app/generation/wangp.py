@@ -103,6 +103,11 @@ class WanGPService:
                 "references": refs,
                 "consistency_lock": project.consistency_lock and self._has_locked_characters(scene),
                 "output_path": str(target.resolve()),
+                "image_start": scene.start_frame_path or "",
+                "image_end": scene.end_frame_path or "",
+                "video_source": scene.source_video_path or "",
+                "video_guide": scene.control_video_path or "",
+                "overrides": project.generation_overrides,
             }
             (out_dir / f"prompt-{shot_index:02d}.json").write_text(json.dumps({"prompt": prompt, "negative_prompt": scene.negative_prompt, "references": refs}, indent=2), encoding="utf-8")
             (out_dir / f"settings-{shot_index:02d}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
