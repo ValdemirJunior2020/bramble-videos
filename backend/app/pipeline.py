@@ -40,7 +40,13 @@ def _missing_references(project: Project) -> list[str]:
     for scene in project.scenes:
         for name in scene.characters:
             asset = find_asset(name)
-            if not asset or not any(Path(x).exists() for x in asset.image_paths):
+            if asset and not asset.identity_lock:
+                continue
+            if not asset or not asset.approved:
+                missing.add(name)
+                continue
+            candidates = [asset.primary_image_path, *asset.image_paths]
+            if not any(value and Path(value).exists() for value in candidates):
                 missing.add(name)
     return sorted(missing)
 
