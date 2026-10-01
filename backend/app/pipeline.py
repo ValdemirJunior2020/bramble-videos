@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import httpx
 from pathlib import Path
 
 from .assets import find_asset
@@ -106,6 +108,19 @@ async def _generate_comfy_scene(project: Project, scene, index: int, total: int,
     return clip
 
 
+async def _release_ollama_for_wangp() -> None:
+    """Best-effort unload of the planning model so WanGP gets the 16 GB GPU budget."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                f"{settings.ollama_url.rstrip('/')}/api/generate",
+                json={"model": settings.ollama_model, "prompt": "", "keep_alive": 0, "stream": False},
+            )
+    except Exception:
+        # Ollama is optional during rendering; failure to unload must not destroy a project.
+        pass
+
+
 async def render_project(project_id: str, regenerate_all_images: bool = False) -> None:
     project = load_project(project_id)
     folder = project_dir(project_id)
@@ -139,6 +154,11 @@ async def render_project(project_id: str, regenerate_all_images: bool = False) -
         project.narration_path = str(narration)
         project.subtitle_path = str(subtitles)
         save_project(project)
+
+        if project.generation_engine == "wangp":
+            project.stage = "Releasing planner VRAM for WanGP"
+            save_project(project)
+            await _release_ollama_for_wangp()
 
         clips: list[Path] = []
         total = len(project.scenes)
