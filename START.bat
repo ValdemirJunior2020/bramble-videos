@@ -13,6 +13,8 @@ set "TTS_DEVICE=auto"
 set "WANGP_ROOT=%~dp0runtime\WanGP"
 set "WANGP_MEMORY_PROFILE=4"
 set "WANGP_ATTENTION=sdpa"
+set "MIOPEN_FIND_MODE=FAST"
+set "PID_DIR=%~dp0runtime\pids"
 
 if exist ".env" (
   for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
@@ -24,7 +26,7 @@ if exist ".env" (
 )
 if not "%WANGP_ROOT:~1,1%"==":" set "WANGP_ROOT=%~dp0%WANGP_ROOT%"
 set "WANGP_PYTHON=%WANGP_ROOT%\env_venv\Scripts\python.exe"
-set "MIOPEN_FIND_MODE=FAST"
+if not exist "%PID_DIR%" mkdir "%PID_DIR%"
 
 echo ============================================================
 echo BRAMBLE VIDEOS - WANGP CINEMATIC STUDIO
@@ -47,6 +49,7 @@ if "!NEEDS_INSTALL!"=="1" (
   if errorlevel 1 exit /b 1
 )
 
+rem Ollama is shared. Start it only if absent, and never claim ownership of it.
 netstat -ano | findstr ":11434 " | findstr "LISTENING" >nul
 if errorlevel 1 (
   where ollama >nul 2>nul
@@ -56,24 +59,34 @@ if errorlevel 1 (
 netstat -ano | findstr ":%WANGP_PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
   echo Starting persistent WanGP API session...
-  start "Bramble WanGP" /D "%~dp0backend" "%WANGP_PYTHON%" -m uvicorn wangp_bridge:app --host 127.0.0.1 --port %WANGP_PORT%
+  powershell -NoProfile -Command "$p=Start-Process -FilePath '%WANGP_PYTHON%' -ArgumentList '-m','uvicorn','wangp_bridge:app','--host','127.0.0.1','--port','%WANGP_PORT%' -WorkingDirectory '%~dp0backend' -WindowStyle Minimized -PassThru; Set-Content -Path '%PID_DIR%\wangp.pid' -Value $p.Id"
 ) else (
-  echo [OK] WanGP bridge already running.
+  echo [OK] WanGP bridge already running - reusing it and not taking ownership.
+  if exist "%PID_DIR%\wangp.pid" del /q "%PID_DIR%\wangp.pid" >nul 2>nul
 )
 
 netstat -ano | findstr ":%CHATTERBOX_PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Chatterbox" /D "%~dp0chatterbox_service" cmd /k "set TTS_DEVICE=%TTS_DEVICE%&& set PYTHONUTF8=1&& set PYTHONIOENCODING=utf-8&& .\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port %CHATTERBOX_PORT%"
+  powershell -NoProfile -Command "$p=Start-Process -FilePath '%~dp0chatterbox_service\.venv\Scripts\python.exe' -ArgumentList '-m','uvicorn','app:app','--host','127.0.0.1','--port','%CHATTERBOX_PORT%' -WorkingDirectory '%~dp0chatterbox_service' -WindowStyle Minimized -PassThru; Set-Content -Path '%PID_DIR%\chatterbox.pid' -Value $p.Id"
+) else (
+  echo [OK] Chatterbox already running - reusing it and not taking ownership.
+  if exist "%PID_DIR%\chatterbox.pid" del /q "%PID_DIR%\chatterbox.pid" >nul 2>nul
 )
 
 netstat -ano | findstr ":%BACKEND_PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Backend" /D "%~dp0backend" cmd /k "set PYTHONUTF8=1&& set PYTHONIOENCODING=utf-8&& .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
+  powershell -NoProfile -Command "$p=Start-Process -FilePath '%~dp0backend\.venv\Scripts\python.exe' -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port','%BACKEND_PORT%' -WorkingDirectory '%~dp0backend' -WindowStyle Minimized -PassThru; Set-Content -Path '%PID_DIR%\backend.pid' -Value $p.Id"
+) else (
+  echo [OK] Bramble backend already running - reusing it and not taking ownership.
+  if exist "%PID_DIR%\backend.pid" del /q "%PID_DIR%\backend.pid" >nul 2>nul
 )
 
 netstat -ano | findstr ":%FRONTEND_PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "Bramble Frontend" /D "%~dp0frontend" cmd /k "npm run dev -- --host 127.0.0.1 --port %FRONTEND_PORT%"
+  powershell -NoProfile -Command "$p=Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','npm run dev -- --host 127.0.0.1 --port %FRONTEND_PORT%' -WorkingDirectory '%~dp0frontend' -WindowStyle Minimized -PassThru; Set-Content -Path '%PID_DIR%\frontend.pid' -Value $p.Id"
+) else (
+  echo [OK] Bramble frontend already running - reusing it and not taking ownership.
+  if exist "%PID_DIR%\frontend.pid" del /q "%PID_DIR%\frontend.pid" >nul 2>nul
 )
 
 timeout /t 8 /nobreak >nul
