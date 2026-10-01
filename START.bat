@@ -24,6 +24,7 @@ if exist ".env" (
 )
 if not "%WANGP_ROOT:~1,1%"==":" set "WANGP_ROOT=%~dp0%WANGP_ROOT%"
 set "WANGP_PYTHON=%WANGP_ROOT%\env_venv\Scripts\python.exe"
+set "MIOPEN_FIND_MODE=FAST"
 
 echo ============================================================
 echo BRAMBLE VIDEOS - WANGP CINEMATIC STUDIO
@@ -55,7 +56,7 @@ if errorlevel 1 (
 netstat -ano | findstr ":%WANGP_PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
   echo Starting persistent WanGP API session...
-  start "Bramble WanGP" /D "%~dp0backend" cmd /k "set WANGP_ROOT=%WANGP_ROOT%&& set WANGP_MEMORY_PROFILE=%WANGP_MEMORY_PROFILE%&& set WANGP_ATTENTION=%WANGP_ATTENTION%&& set MIOPEN_FIND_MODE=FAST&& set PYTHONUTF8=1&& "%WANGP_PYTHON%" -m uvicorn wangp_bridge:app --host 127.0.0.1 --port %WANGP_PORT%"
+  start "Bramble WanGP" /D "%~dp0backend" "%WANGP_PYTHON%" -m uvicorn wangp_bridge:app --host 127.0.0.1 --port %WANGP_PORT%
 ) else (
   echo [OK] WanGP bridge already running.
 )
