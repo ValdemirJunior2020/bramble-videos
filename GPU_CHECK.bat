@@ -8,7 +8,7 @@ if exist ".env" (
   for /f "usebackq tokens=1,* delims==" %%A in (".env") do if /i "%%A"=="WANGP_ROOT" set "WANGP_ROOT=%%B"
 )
 if not "%WANGP_ROOT:~1,1%"==":" set "WANGP_ROOT=%~dp0%WANGP_ROOT%"
-set "WANGP_PYTHON=%WANGP_ROOT%\wan2gp-env\Scripts\python.exe"
+set "WANGP_PYTHON=%WANGP_ROOT%\env_venv\Scripts\python.exe"
 
 echo ------------------------------------------------------------
 echo BRAMBLE WANGP / AMD GPU CHECK
