@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 AssetType = Literal["character", "location", "prop", "group"]
@@ -67,6 +67,10 @@ class Scene(BaseModel):
     generation_total_steps: int | None = None
     generation_job_id: str | None = None
     approved: bool = False
+    start_frame_path: str | None = None
+    end_frame_path: str | None = None
+    source_video_path: str | None = None
+    control_video_path: str | None = None
 
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=180)
@@ -85,6 +89,7 @@ class ProjectCreate(BaseModel):
     generation_engine: Literal["wangp", "comfy"] = "wangp"
     generation_model: str = ""
     generation_preset: Literal["fast", "balanced", "high", "max"] = "balanced"
+    generation_overrides: dict[str, Any] = Field(default_factory=dict)
     reference_denoise: float | None = Field(default=None, ge=0.15, le=0.95)
     transition: Literal["Gentle Fade", "Cut", "Subtle Zoom"] = "Gentle Fade"
     background_music_path: str | None = None
@@ -133,6 +138,7 @@ class Project(BaseModel):
     generation_engine: Literal["wangp", "comfy"] = "wangp"
     generation_model: str = ""
     generation_preset: Literal["fast", "balanced", "high", "max"] = "balanced"
+    generation_overrides: dict[str, Any] = Field(default_factory=dict)
     reference_denoise: float | None = None
     transition: str = "Gentle Fade"
     background_music_path: str | None = None
@@ -166,6 +172,10 @@ class SceneUpdate(BaseModel):
     action: str | None = None
     image_prompt: str | None = None
     approved: bool | None = None
+    start_frame_path: str | None = None
+    end_frame_path: str | None = None
+    source_video_path: str | None = None
+    control_video_path: str | None = None
 
 class RenderRequest(BaseModel):
     regenerate_all_images: bool = False
