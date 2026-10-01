@@ -66,6 +66,7 @@ class Scene(BaseModel):
     generation_current_step: int | None = None
     generation_total_steps: int | None = None
     generation_job_id: str | None = None
+    approved: bool = False
 
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=180)
@@ -164,6 +165,7 @@ class SceneUpdate(BaseModel):
     emotion: str | None = None
     action: str | None = None
     image_prompt: str | None = None
+    approved: bool | None = None
 
 class RenderRequest(BaseModel):
     regenerate_all_images: bool = False
