@@ -157,6 +157,9 @@ def _run_generation(job_id: str, req: GenerateRequest):
     active_job = None
     try:
         with _gpu_lock:
+            with _jobs_lock:
+                if (_jobs.get(job_id) or {}).get("state") == "cancelled":
+                    return
             session = _init_session()
             settings, schema = _build_settings(session, req)
             _active_model = settings["model_type"]
@@ -215,6 +218,7 @@ def health():
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
             info["vram_gb"] = round(props.total_memory / 1024**3, 1)
+            info["architecture"] = str(getattr(props, "gcnArchName", "") or getattr(props, "gcn_arch_name", "") or ("gfx1200" if "9060" in info["gpu_name"] else ""))
         if installed:
             _init_session(); info["ready"] = True; info["session"] = "Connected"
     except Exception as exc:
