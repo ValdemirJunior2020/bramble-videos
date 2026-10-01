@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:8b"
     comfyui_url: str = "http://127.0.0.1:8188"
-    comfyui_path: str = r"C:\Users\nobody\Documents\comfy\ComfyUI"
+    comfyui_path: str = ""
     comfyui_checkpoint: str = ""
     wangp_root: str = str(REPO_ROOT / "runtime" / "WanGP")
     wangp_bridge_url: str = "http://127.0.0.1:8020"
