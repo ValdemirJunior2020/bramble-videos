@@ -82,7 +82,7 @@ It reuses compatible already-running services and starts:
 
 The standard workflow does **not** open the WanGP Gradio UI.
 
-`STOP.bat` stops the Bramble frontend, backend, and WanGP bridge. Shared Ollama and Chatterbox are left alone so unrelated local projects are not killed.
+`STOP.bat` stops only PID-tracked services that this Bramble launch started. Pre-existing/shared services are left untouched, and Ollama is never killed by Bramble.
 
 All services bind to localhost by default.
 
@@ -131,8 +131,12 @@ storage/projects/<project-id>/
   narration/
   scenes/
     scene-001/
+      prompt-01.json
+      settings-01.json
       clip.mp4
     scene-002/
+      prompt-01.json
+      settings-01.json
       clip.mp4
   final/
     <project-id>-final.mp4
