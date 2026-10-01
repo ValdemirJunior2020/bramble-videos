@@ -81,6 +81,8 @@ async def render_final(visuals: Path, narration: Path, subtitles: Path, output: 
         audio_map = ["-map", "[a]"]
 
     video_label = "v0"
+    width, height = dimensions(project)
+    filters.append(f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}[basev]")
     if project.subtitles_enabled:
         style = (
             f"FontName={project.subtitle_font},"
@@ -90,9 +92,9 @@ async def render_final(visuals: Path, narration: Path, subtitles: Path, output: 
             f"Outline={project.subtitle_stroke_width},Shadow=0,"
             f"Alignment={_subtitle_alignment(project.subtitle_position)},MarginV=65"
         )
-        filters.append(f"[0:v]subtitles='{_escape_sub(subtitles)}':force_style='{style}'[{video_label}]")
+        filters.append(f"[basev]subtitles='{_escape_sub(subtitles)}':force_style='{style}'[{video_label}]")
     else:
-        filters.append(f"[0:v]null[{video_label}]")
+        filters.append(f"[basev]null[{video_label}]")
 
     if project.watermark_path and Path(project.watermark_path).exists():
         watermark_index = next_input
