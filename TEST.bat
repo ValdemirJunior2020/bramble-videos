@@ -12,7 +12,7 @@ if not exist "backend\.venv\Scripts\python.exe" (
 )
 
 echo [TEST] Compiling backend...
-"backend\.venv\Scripts\python.exe" -m compileall -q "backend\app"
+"backend\.venv\Scripts\python.exe" -m compileall -q "backend\app" "backend\wangp_bridge.py" "backend\wangp_smoke.py"
 if errorlevel 1 goto :fail
 
 echo [TEST] Running backend tests from backend folder...
