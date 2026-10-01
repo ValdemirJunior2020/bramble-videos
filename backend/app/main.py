@@ -151,6 +151,14 @@ async def generation_model_schema(model_type: str):
         raise HTTPException(503, str(exc))
 
 
+@app.get("/api/generation/models/{model_type}/defaults")
+async def generation_model_defaults(model_type: str):
+    try:
+        return await wangp_service.default_settings(model_type)
+    except Exception as exc:
+        raise HTTPException(503, str(exc))
+
+
 @app.get("/api/voices")
 async def voices():
     return [voice.model_dump() for voice in await list_sapi_voices()]
@@ -193,7 +201,7 @@ def remove_asset(asset_id: str):
 @app.post("/api/uploads")
 async def upload_file(file: UploadFile = File(...)):
     suffix = Path(file.filename or "upload.bin").suffix.lower()
-    if suffix not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".png", ".jpg", ".jpeg", ".webp"}: raise HTTPException(400, "Unsupported upload type")
+    if suffix not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".mkv", ".webm"}: raise HTTPException(400, "Unsupported upload type")
     target = settings.uploads_path / f"{uuid4().hex}{suffix}"
     with target.open("wb") as out: shutil.copyfileobj(file.file, out)
     return {"path": str(target)}
@@ -207,7 +215,7 @@ async def create_project(request: ProjectCreate):
         id=uuid4().hex, title=request.title, script=request.script, project_mode=request.project_mode, language=request.language,
         aspect=request.aspect, custom_width=request.custom_width, custom_height=request.custom_height, voice=request.voice,
         narration_style=request.narration_style, narrator_speed=request.narrator_speed, reference_voice_path=request.reference_voice_path,
-        consistency_lock=request.consistency_lock, generate_images=request.generate_images, generation_engine=request.generation_engine, generation_model=request.generation_model, generation_preset=request.generation_preset, reference_denoise=request.reference_denoise,
+        consistency_lock=request.consistency_lock, generate_images=request.generate_images, generation_engine=request.generation_engine, generation_model=request.generation_model, generation_preset=request.generation_preset, generation_overrides=request.generation_overrides, reference_denoise=request.reference_denoise,
         transition=request.transition, background_music_path=request.background_music_path, music_volume=request.music_volume,
         subtitles_enabled=request.subtitles_enabled, subtitle_font=request.subtitle_font, subtitle_size=request.subtitle_size,
         subtitle_position=request.subtitle_position, subtitle_color=request.subtitle_color, subtitle_stroke_color=request.subtitle_stroke_color,
