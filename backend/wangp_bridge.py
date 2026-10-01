@@ -27,6 +27,8 @@ _session_lock = threading.Lock()
 _gpu_lock = threading.Lock()
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+_active_model = ""
+_model_status = "Idle"
 
 
 class GenerateRequest(BaseModel):
@@ -130,22 +132,40 @@ def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
     return defaults, schema
 
 
+
+
+def _phase_label(update) -> str:
+    phase = str(getattr(update, "phase", "") or "").strip().lower()
+    raw = str(getattr(update, "raw_phase", "") or "").strip()
+    labels = {
+        "loading_model": "Loading model",
+        "encoding_text": "Encoding prompt",
+        "inference": raw or "Generating",
+        "decoding": "Decoding video",
+        "downloading_output": "Post-processing",
+        "cancelled": "Cancelled",
+    }
+    return labels.get(phase, raw or str(getattr(update, "phase", "") or "Generating"))
+
 def _set_job(job_id: str, **values):
     with _jobs_lock:
         _jobs.setdefault(job_id, {}).update(values)
 
 
 def _run_generation(job_id: str, req: GenerateRequest):
+    global _active_model, _model_status
     active_job = None
     try:
         with _gpu_lock:
             session = _init_session()
             settings, schema = _build_settings(session, req)
+            _active_model = settings["model_type"]
+            _model_status = "Generating"
             _set_job(job_id, state="generating", status="Preparing", phase="Preparing", progress=1, model_type=settings["model_type"], settings=settings, schema=schema, seed=settings.get("seed"))
 
             class Callbacks:
                 def on_progress(self, update):
-                    _set_job(job_id, phase=str(getattr(update, "phase", "") or "Generating"), status=str(getattr(update, "status", "") or "Generating"), progress=int(getattr(update, "progress", 0) or 0), current_step=getattr(update, "current_step", None), total_steps=getattr(update, "total_steps", None))
+                    _set_job(job_id, phase=_phase_label(update), status=str(getattr(update, "status", "") or "Generating"), progress=int(getattr(update, "progress", 0) or 0), current_step=getattr(update, "current_step", None), total_steps=getattr(update, "total_steps", None))
                 def on_status(self, text):
                     _set_job(job_id, status=str(text or ""))
                 def on_preview(self, preview):
@@ -176,6 +196,7 @@ def _run_generation(job_id: str, req: GenerateRequest):
     except Exception as exc:
         _set_job(job_id, state="failed", error=str(exc), traceback=traceback.format_exc())
     finally:
+        _model_status = "Loaded" if _active_model else "Idle"
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id].pop("native_job", None)
@@ -184,7 +205,7 @@ def _run_generation(job_id: str, req: GenerateRequest):
 @app.get("/health")
 def health():
     installed = (WANGP_ROOT / "shared" / "api.py").exists()
-    info = {"installed": installed, "ready": False, "root": str(WANGP_ROOT), "commit": _git_commit(), "attention": os.environ.get("WANGP_ATTENTION", "sdpa"), "memory_profile": os.environ.get("WANGP_MEMORY_PROFILE", "4")}
+    info = {"installed": installed, "ready": False, "root": str(WANGP_ROOT), "commit": _git_commit(), "attention": os.environ.get("WANGP_ATTENTION", "sdpa"), "memory_profile": os.environ.get("WANGP_MEMORY_PROFILE", "4"), "active_model": _active_model, "model_status": _model_status, "session": "Connected" if _session is not None else "Offline"}
     try:
         import torch
         info["pytorch"] = torch.__version__
@@ -195,7 +216,7 @@ def health():
             props = torch.cuda.get_device_properties(0)
             info["vram_gb"] = round(props.total_memory / 1024**3, 1)
         if installed:
-            _init_session(); info["ready"] = True
+            _init_session(); info["ready"] = True; info["session"] = "Connected"
     except Exception as exc:
         info["error"] = str(exc)
     return info
