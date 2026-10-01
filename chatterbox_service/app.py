@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import gc
 import os
 import re
 import tempfile
@@ -152,6 +153,17 @@ def health() -> dict:
         "multilingual_model_loaded": _multilingual_model is not None,
         "languages": ["en", "pt-BR"],
     }
+
+@app.post("/unload")
+def unload() -> dict:
+    global _english_model, _multilingual_model
+    with _model_lock:
+        _english_model = None
+        _multilingual_model = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return {"ok": True, "device": _device()}
 
 @app.get("/profiles")
 def profiles() -> dict:
