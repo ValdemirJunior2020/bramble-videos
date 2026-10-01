@@ -37,3 +37,47 @@ def test_scene_generation_state_is_persistable():
     assert restored.generation_state == "complete"
     assert restored.seed == 1234
     assert restored.clip_path == "clip.mp4"
+
+
+def test_wangp_scene_request_to_real_output_path(tmp_path):
+    import asyncio
+    from pathlib import Path
+    from app.generation.wangp import WanGPService
+    from app.models import Project
+
+    service = WanGPService()
+    captured = {}
+
+    async def fake_request(method, path, **kwargs):
+        if method == "POST" and path == "/generate":
+            captured.update(kwargs["json"])
+            return {"job_id": "job-1"}
+        if method == "GET" and path == "/jobs/job-1":
+            output = Path(captured["output_path"])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"fake-mp4-for-adapter-test")
+            return {
+                "state": "complete",
+                "phase": "Scene complete",
+                "progress": 100,
+                "seed": 12345,
+                "output_path": str(output),
+            }
+        raise AssertionError((method, path))
+
+    service._request = fake_request
+    project = Project(id="p1", title="Test", script="Hello", language="en", aspect="16:9")
+    scene = Scene(
+        scene_number=1,
+        narration="Hello",
+        image_prompt="A cinematic meadow, slow dolly forward",
+        duration_seconds=3.0,
+    )
+    outputs = asyncio.run(service.generate_scene(project, scene, tmp_path))
+    assert outputs == [tmp_path / "clip.mp4"]
+    assert captured["duration_seconds"] == 3.0
+    assert captured["resolution"] == "832x480"
+    assert captured["preset"] == "balanced"
+    assert scene.seed == 12345
+    assert scene.generation_state == "complete"
+    assert (tmp_path / "settings-01.json").exists()
