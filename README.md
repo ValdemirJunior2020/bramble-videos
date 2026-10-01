@@ -1,63 +1,204 @@
 # Bramble Videos
 
-A separate local-first AI production studio for **Bramble & Grace**. It does not modify `MoneyPrinterJunior` or `MoneyPrint-Junior-Audio-to-image`; those working repos stay untouched.
+Bramble Videos is a **local cinematic AI production studio**. The React interface, FastAPI project system, Character Library, exact script handling, narration, exact phrase subtitle timing, music, watermark, and FFmpeg finishing remain Bramble-owned workflows. **Video generation is powered by WanGP** through its official Python API.
 
-## What this project does
+## Core engines
 
-- Scene-by-scene planning from your exact script. The planner analyzes the script but does not rewrite it.
-- Automatic recognition of Bramble, Grace, Pip, Oliver and Barnaby when their names appear.
-- Character Library with multiple approved reference images per character, location, prop or group.
-- **Bramble Consistency Lock** prevents a render when a named character is missing an approved reference.
-- Uses multiple face/front/back/expression reference images together when building a character reference sheet.
-- Cinematic, script-matched, high-resolution ComfyUI generation: 1920x1080 for 16:9, 1080x1920 for 9:16, 1536x1536 for 1:1, 1440x1800 for 4:5, plus custom dimensions.
-- New poses and expressions are created from the narration while approved character references preserve identity.
-- Phrase-based subtitles and narration are generated from the **same audio chunks**, so subtitle timing and image timing share one timeline.
-- English or Portuguese-Brazilian project selection.
-- Local Windows voice selection plus expressive Chatterbox narration.
-- Narration styles: Calm, Documentary, Warm, Inspirational, Emotional, Dramatic and Sermon.
-- Optional uploaded voice-reference audio for Chatterbox voice/style matching.
-- Subtitle controls for font, size, top/middle/bottom position, text color, outline color and outline width.
-- Watermark image upload with position, opacity and size controls.
-- Background music upload with volume control.
-- 16:9, 9:16, 1:1 and 4:5 outputs plus custom width/height.
-- Local Ollama scene analysis, local ComfyUI image generation, local Chatterbox, and AMD AMF video encoding when available.
+- **WanGP** — cinematic image/video generation through the official `shared.api` Python integration.
+- **Ollama** — script and scene intelligence only.
+- **Chatterbox / Windows / Piper voices** — narration.
+- **FFmpeg** — final edit, subtitles, music, watermark, scaling/cropping, and AMD AMF encoding when available.
+- **ComfyUI** — retained only as an optional compatibility fallback while the migration settles.
 
-## Conflict-free local ports
+Bramble does not automate WanGP's browser or scrape Gradio. A local WanGP bridge owns one persistent `WanGPSession` so a large model is not reinitialized for every scene.
 
-- Bramble frontend: `http://127.0.0.1:5174`
-- Bramble backend/API: `http://127.0.0.1:8010`
-- Chatterbox: `http://127.0.0.1:8001`
-- Shared Ollama: `http://127.0.0.1:11434`
-- Shared ComfyUI: `http://127.0.0.1:8188`
+## Target AMD machine
 
-`START.bat` reuses Ollama, ComfyUI, or Chatterbox if they are already running. It does not replace or change the working services from your other projects. `STOP.bat` only stops Bramble ports `5174` and `8010`.
+Primary validated configuration target:
 
-## Install and run
+- AMD Radeon RX 9060 XT 16 GB
+- RDNA 4 / `gfx1200`
+- Windows 11
+- 32 GB system RAM
+- Python 3.11 for the WanGP environment
+- ROCm/TheRock `gfx120X-all` PyTorch packages
+- WanGP memory profile 4
+- SDPA attention by default
 
-After pulling a new version, run `INSTALL.bat` once. The installer creates/verifies the backend environment, the local Chatterbox environment, frontend packages, storage folders, and tests. The first Chatterbox install can take several minutes because its local TTS dependencies are larger.
+ROCm-enabled PyTorch still exposes the AMD device through the `torch.cuda` namespace. That does not mean CUDA packages are installed.
 
-After installation, double-click `START.bat`. Open `http://127.0.0.1:5174` if the browser does not open automatically.
+## Architecture
 
-## Studio controls
+```text
+Bramble React UI
+        |
+Bramble FastAPI backend
+        |
+scene planner + Character Library + Consistency Lock
+        |
+local Bramble WanGP bridge (127.0.0.1:8020)
+        |
+persistent WanGP shared.api session
+        |
+AMD RX 9060 XT / gfx1200
+        |
+real generated MP4 scene clips
+        |
+FFmpeg + narration + exact subtitles + music + watermark
+        |
+final MP4
+```
 
-The **Studio** page contains the language selector, local/expressive voice selector, narration style, uploaded voice reference, video format, transition, subtitle settings, background music, watermark controls, Character Reference quick upload, Consistency Lock and the episode planner.
+WanGP stays in `runtime/WanGP` by default and is ignored by Git. You can set `WANGP_ROOT` to another directory, such as `C:\AI\WanGP`. Model files and checkpoints are never committed to this repository.
 
-The **Character Library** tab is for saving multiple approved reference images for Bramble, Grace, Pip, Oliver, Barnaby, locations, props and groups.
+## Install
 
-The **System** tab shows ComfyUI, Ollama, Chatterbox and FFmpeg encoder status.
+1. Install Git, Node.js, FFmpeg/FFprobe, Python for Bramble, and **Python 3.11** for WanGP.
+2. Double-click `INSTALL.bat`.
+3. The installer:
+   - detects the AMD GPU and reports RX 9060 XT as `gfx1200`;
+   - clones the official WanGP repository if it is missing;
+   - creates an isolated `wan2gp-env`;
+   - installs the current RDNA4 `gfx120X-all` ROCm/TheRock PyTorch stack;
+   - installs WanGP and the small local bridge dependencies;
+   - verifies `shared.api` imports and `torch.cuda.is_available()`;
+   - preserves the independent Bramble and Chatterbox environments;
+   - installs frontend dependencies;
+   - verifies FFmpeg/AMF and runs code tests.
 
-## Exact sync design
+The first WanGP model download can be large. Bramble lists the models WanGP reports and uses their availability/capability metadata rather than pretending every model is installed.
 
-The tool does **not** guess subtitle timing from word count. Each scene narration is split into readable phrases. Each phrase is synthesized as its own audio file, its real duration is measured with FFprobe, and its subtitle uses that same measured start/end time. Scene image duration is calculated from the exact sum of its phrase audio. Narration, phrase subtitles and scene changes therefore come from the same timeline.
+## Start / stop
+
+Double-click `START.bat`.
+
+It reuses compatible already-running services and starts:
+
+- Bramble frontend — `127.0.0.1:5174`
+- Bramble FastAPI — `127.0.0.1:8010`
+- Bramble WanGP bridge — `127.0.0.1:8020`
+- Chatterbox — `127.0.0.1:8001` when needed
+- Ollama — `127.0.0.1:11434` when installed
+
+The standard workflow does **not** open the WanGP Gradio UI.
+
+`STOP.bat` stops the Bramble frontend, backend, and WanGP bridge. Shared Ollama and Chatterbox are left alone so unrelated local projects are not killed.
+
+All services bind to localhost by default.
+
+## Cinematic generation
+
+Normal projects use **WanGP** as the default generator. The UI provides:
+
+- dynamic local model discovery;
+- Fast Preview, Balanced Cinematic, High Quality, and Maximum Local Quality presets;
+- real moving scene clips instead of slideshow-style still-image zooms;
+- character reference conditioning when the selected model exposes a compatible reference role;
+- sequential one-heavy-job-at-a-time generation for 16 GB VRAM safety;
+- long-scene splitting into continuity sub-shots;
+- progress phase and percentage from WanGP events;
+- image or MP4 generation preview when WanGP emits one;
+- real cancellation through `SessionJob.cancel()`;
+- saved seeds;
+- regenerate with the same seed or a new seed;
+- completed-scene reuse so a stopped project does not intentionally regenerate successful clips.
+
+For a narration scene longer than the practical shot window, Bramble generates multiple short shots and joins them while preserving scene identity/continuity instructions.
 
 ## Character consistency
 
-If ComfyUI has IP-Adapter nodes installed, Bramble Videos detects them and uses the approved character reference sheet through IP-Adapter first. If those nodes are not installed, it falls back to a vanilla ComfyUI image-to-image reference workflow, then to text-to-image only if required. Your existing ComfyUI installation is left untouched.
+The Character Library remains first-class. Bramble, Grace, Pip, Oliver, Barnaby, and custom saved characters can hold multiple approved references.
 
-## GPU behavior
+When Consistency Lock is on, a named scene character without a valid approved reference blocks generation rather than silently substituting a random character.
 
-ComfyUI stays pointed at your existing working local installation. FFmpeg automatically uses `h264_amf` when the installed FFmpeg build exposes AMD AMF; otherwise it falls back to `libx264`. Ollama remains shared on port `11434`.
+Bramble passes approved references using the strongest generic media role declared by the selected WanGP model. Unsupported reference modes return an actionable error.
 
-## Safety for your existing projects
+## Exact script, narration, and subtitles
 
-The original two working repositories are not modified by Bramble Videos. Bramble has separate frontend/backend ports and reuses already-running shared AI services instead of replacing them.
+The planner may split and visually analyze the script, but the narration text is not rewritten merely to make the visual prompt better.
+
+Subtitle timing is still based on measured audio duration, not estimated word count. Narration phrases and subtitle timing share the same FFprobe-measured timeline.
+
+Existing English / Portuguese-Brazilian selection, narration styles, Windows voices, Chatterbox, uploaded voice references, background music, watermark controls, and aspect-ratio output remain available.
+
+## Outputs and resume
+
+Project state remains under `storage/projects/<project-id>/`. WanGP scene clips are organized under:
+
+```text
+storage/projects/<project-id>/
+  project.json
+  narration/
+  scenes/
+    scene-001/
+      clip.mp4
+    scene-002/
+      clip.mp4
+  final/
+    <project-id>-final.mp4
+```
+
+`project.json` persists scene state, progress, seed, selected model/preset, clip paths, and final output state.
+
+## System health
+
+The System page calls `GET /api/system/health` and reports:
+
+- WanGP installed / ready
+- detected GPU
+- `gfx1200` on RX 9060 XT
+- VRAM
+- PyTorch version
+- ROCm/HIP version
+- GPU acceleration
+- WanGP commit
+- Ollama
+- Chatterbox
+- FFmpeg
+- AMD AMF / `h264_amf`
+
+Run `GPU_CHECK.bat` for a terminal-level diagnostic.
+
+## Hardware smoke test
+
+After at least one compatible WanGP video model is installed, run:
+
+```bat
+TEST_WANGP.bat
+```
+
+It uses the official `shared.api` session to generate a short real video with conservative settings:
+
+> A cinematic sunrise over a peaceful meadow, slow camera push forward.
+
+The test passes only when WanGP returns a real MP4 on disk.
+
+## Tests
+
+Normal code validation:
+
+```bat
+TEST.bat
+```
+
+CI compiles the Bramble backend plus WanGP bridge/smoke scripts, runs the Python tests, and builds the React frontend. Hardware generation is intentionally a local smoke test because GitHub-hosted CI does not provide the target RX 9060 XT.
+
+## Troubleshooting
+
+**WanGP bridge offline** — verify `WANGP_ROOT` in `.env`, run `GPU_CHECK.bat`, then restart `START.bat`.
+
+**ROCm PyTorch cannot see the GPU** — `GPU_CHECK.bat` must report `torch.cuda.is_available() = True` and an AMD Radeon device. Do not install CUDA as a workaround.
+
+**Selected model is missing** — install/download that model through the supported WanGP model mechanism, or select another available model in Bramble.
+
+**Out of VRAM** — use Balanced or Fast Preview, keep profile 4/SDPA, and avoid simultaneous GPU-heavy Ollama workloads while a WanGP scene is rendering.
+
+**AMD AMF unavailable** — Bramble falls back to `libx264`; generation itself can still work.
+
+## WanGP attribution and license
+
+**Video generation powered by WanGP**, a DeepBeepMeep production.
+
+Bramble clones WanGP as an independently updateable local runtime rather than copying its source into this repository. WanGP currently uses the **WanGP Community License 2.0** and its third-party models/components retain their own licenses. Upstream notices must remain intact. Review the current WanGP license before redistributing Bramble together with WanGP or using the integration as part of a paid/hosted product.
+
+Bramble records the installed WanGP Git commit in system health for debugging and reproducibility. It does not automatically replace a working WanGP checkout with an untested upstream update.
