@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WANGP_ROOT = Path(os.environ.get("WANGP_ROOT", REPO_ROOT / "runtime" / "WanGP")).expanduser().resolve()
@@ -39,7 +39,7 @@ class GenerateRequest(BaseModel):
     resolution: str = "832x480"
     seed: int = -1
     preset: str = "balanced"
-    references: list[str] = []
+    references: list[str] = Field(default_factory=list)
     consistency_lock: bool = False
     output_path: str
 
