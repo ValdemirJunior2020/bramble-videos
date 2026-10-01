@@ -96,6 +96,8 @@ class WanGPService:
                 "consistency_lock": project.consistency_lock and bool(scene.characters),
                 "output_path": str(target.resolve()),
             }
+            (out_dir / f"prompt-{shot_index:02d}.json").write_text(json.dumps({"prompt": prompt, "negative_prompt": scene.negative_prompt, "references": refs}, indent=2), encoding="utf-8")
+            (out_dir / f"settings-{shot_index:02d}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
             data = await self._request("POST", "/generate", json=payload, timeout=30.0)
             job_id = data["job_id"]
             scene.generation_job_id = job_id
