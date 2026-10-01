@@ -95,6 +95,7 @@ def _pick_model(session, requested: str) -> str:
 def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
     model_type = _pick_model(session, req.model_type)
     schema = session.get_model_schema(model_type) or {}
+    metadata = schema.get("metadata", schema)
     defaults = dict(session.get_default_settings(model_type) or {})
     defaults["model_type"] = model_type
     defaults["prompt"] = req.prompt
@@ -112,7 +113,7 @@ def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
         defaults["num_inference_steps"] = max(4, min(steps + 12, round(steps * scale)))
 
     refs = [str(Path(p).resolve()) for p in req.references if Path(p).exists()]
-    media = (schema.get("media_inputs") or {}).get("image") or {}
+    media = (metadata.get("media_inputs") or {}).get("image") or {}
     if refs:
         if media.get("reference") or media.get("single_reference") or media.get("multiple_references"):
             if media.get("single_reference") and not media.get("multiple_references"):
