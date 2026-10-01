@@ -121,6 +121,14 @@ async def _release_ollama_for_wangp() -> None:
         pass
 
 
+async def _release_chatterbox_for_wangp() -> None:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"{settings.chatterbox_url.rstrip('/')}/unload")
+    except Exception:
+        pass
+
+
 async def render_project(project_id: str, regenerate_all_images: bool = False) -> None:
     project = load_project(project_id)
     folder = project_dir(project_id)
@@ -159,6 +167,7 @@ async def render_project(project_id: str, regenerate_all_images: bool = False) -
             project.stage = "Releasing planner VRAM for WanGP"
             save_project(project)
             await _release_ollama_for_wangp()
+            await _release_chatterbox_for_wangp()
 
         clips: list[Path] = []
         total = len(project.scenes)
