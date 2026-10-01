@@ -63,6 +63,8 @@ class Scene(BaseModel):
     generation_state: Literal["pending", "generating", "complete", "failed", "cancelled"] = "pending"
     generation_progress: int = 0
     generation_phase: str = ""
+    generation_current_step: int | None = None
+    generation_total_steps: int | None = None
     generation_job_id: str | None = None
 
 class ProjectCreate(BaseModel):
