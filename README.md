@@ -21,7 +21,7 @@ Primary validated configuration target:
 - Windows 11
 - 32 GB system RAM
 - Python 3.11 for the WanGP environment
-- ROCm/TheRock `gfx120X-all` PyTorch packages
+- ROCm/TheRock PyTorch selected by WanGP's current AMD auto-installer for `gfx1200`
 - WanGP memory profile 4
 - SDPA attention by default
 
@@ -59,7 +59,7 @@ WanGP stays in `runtime/WanGP` by default and is ignored by Git. You can set `WA
    - detects the AMD GPU and reports RX 9060 XT as `gfx1200`;
    - clones the official WanGP repository if it is missing;
    - creates an isolated `wan2gp-env`;
-   - installs the current RDNA4 `gfx120X-all` ROCm/TheRock PyTorch stack;
+   - calls WanGP's current official automatic installer, which detects the AMD target and installs the recommended ROCm/TheRock stack;
    - installs WanGP and the small local bridge dependencies;
    - verifies `shared.api` imports and `torch.cuda.is_available()`;
    - preserves the independent Bramble and Chatterbox environments;
