@@ -84,24 +84,70 @@ def _availability_ready(record: dict) -> bool:
     return True
 
 
-def _pick_model(session, requested: str) -> str:
-    if requested:
-        return requested
-    env_model = os.environ.get("WANGP_DEFAULT_MODEL", "").strip()
-    if env_model:
-        return env_model
+def _model_image_roles(session, model_type: str, record: dict | None = None) -> dict:
+    record = record or {}
+    media = (record.get("media_inputs") or {}).get("image") or {}
+    if media:
+        return media
+    try:
+        schema = session.get_model_schema(model_type) or {}
+        metadata = schema.get("metadata", schema)
+        return ((metadata.get("media_inputs") or {}).get("image") or {})
+    except Exception:
+        return {}
+
+
+def _supports_reference_images(session, model_type: str, record: dict | None = None) -> bool:
+    media = _model_image_roles(session, model_type, record)
+    return bool(
+        media.get("reference")
+        or media.get("single_reference")
+        or media.get("multiple_references")
+        or media.get("start")
+    )
+
+
+def _pick_model(session, requested: str, require_reference: bool = False) -> str:
     models = session.list_model_metadata(main_output="video", include_availability=True)
     ready = [m for m in models if _availability_ready(m)]
     if not ready:
         raise RuntimeError("No locally available WanGP video model was found. Install a video model in WanGP first.")
-    # Prefer a fast general-purpose LTX distilled model when present, then use the
-    # first available video model reported by WanGP.
-    preferred = [m for m in ready if "ltx" in str(m.get("family", "")).lower() and "distill" in (str(m.get("name", "")) + str(m.get("model_type", ""))).lower()]
-    return str((preferred or ready)[0].get("model_type") or "")
+
+    if requested:
+        if not require_reference or _supports_reference_images(session, requested):
+            return requested
+        # Do not let a text-only/incompatible model kill a Bramble render.
+        # Fall through and automatically select a compatible installed video model.
+
+    env_model = os.environ.get("WANGP_DEFAULT_MODEL", "").strip()
+    if env_model and (not require_reference or _supports_reference_images(session, env_model)):
+        return env_model
+
+    candidates = ready
+    if require_reference:
+        candidates = [
+            m for m in ready
+            if _supports_reference_images(session, str(m.get("model_type") or ""), m)
+        ]
+        if not candidates:
+            raise RuntimeError(
+                "Consistency Lock needs a WanGP video model that supports reference/start images, "
+                "but no compatible locally available model was found."
+            )
+
+    # Prefer a fast general-purpose LTX distilled model when it also satisfies
+    # the current media requirements, then use the first compatible ready model.
+    preferred = [
+        m for m in candidates
+        if "ltx" in str(m.get("family", "")).lower()
+        and "distill" in (str(m.get("name", "")) + str(m.get("model_type", ""))).lower()
+    ]
+    return str((preferred or candidates)[0].get("model_type") or "")
 
 
 def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
-    model_type = _pick_model(session, req.model_type)
+    refs_present = any(Path(p).exists() for p in req.references)
+    model_type = _pick_model(session, req.model_type, require_reference=bool(req.consistency_lock and refs_present))
     schema = session.get_model_schema(model_type) or {}
     metadata = schema.get("metadata", schema)
     defaults = dict(session.get_default_settings(model_type) or {})
