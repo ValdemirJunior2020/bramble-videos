@@ -13,7 +13,7 @@ set "WANGP_PYTHON=%WANGP_ROOT%\env_venv\Scripts\python.exe"
 echo ------------------------------------------------------------
 echo BRAMBLE WANGP / AMD GPU CHECK
 echo ------------------------------------------------------------
-powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController ^| Where-Object {$_.Name -match 'AMD|Radeon'} ^| Select-Object -First 1; if($g){Write-Host '[GPU]' $g.Name; Write-Host '[Driver]' $g.DriverVersion; if($g.Name -match '9060'){Write-Host '[Architecture] gfx1200 / RDNA 4'}}else{Write-Host '[WARN] No AMD Radeon GPU detected'}"
+powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController | Where-Object {$_.Name -match 'AMD|Radeon'} ^| Select-Object -First 1; if($g){Write-Host '[GPU]' $g.Name; Write-Host '[Driver]' $g.DriverVersion; if($g.Name -match '9060'){Write-Host '[Architecture] gfx1200 / RDNA 4'}}else{Write-Host '[WARN] No AMD Radeon GPU detected'}"
 
 where clinfo >nul 2>nul
 if errorlevel 1 (echo [clinfo] Not found in PATH.) else (echo [clinfo gfx targets] & clinfo 2>nul | findstr /i "gfx")
