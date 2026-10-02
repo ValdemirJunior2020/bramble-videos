@@ -238,6 +238,15 @@ def start_render(project_id: str, regenerate_all_images: bool = False) -> None:
     existing = TASKS.get(project_id)
     if existing and not existing.done():
         raise RuntimeError("This project is already rendering")
+    # Persist the active state before returning to the UI. This removes the race
+    # where the frontend could poll the old failed/cancelled state immediately
+    # after the user clicked Generate.
+    project = load_project(project_id)
+    project.state = "rendering"
+    project.progress = max(1, int(project.progress or 0))
+    project.stage = "Queued for generation"
+    project.error = None
+    save_project(project)
     TASKS[project_id] = asyncio.create_task(render_project(project_id, regenerate_all_images))
 
 
