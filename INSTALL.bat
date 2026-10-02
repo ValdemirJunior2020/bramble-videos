@@ -64,7 +64,7 @@ if exist ".env" (
 if not "!WANGP_ROOT:~1,1!"==":" set "WANGP_ROOT=%~dp0!WANGP_ROOT!"
 if not exist "runtime" mkdir "runtime"
 
-powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController ^| Where-Object {$_.Name -match 'AMD|Radeon'} ^| Select-Object -First 1; if(-not $g){exit 2}; Write-Host '[GPU]' $g.Name; if($g.Name -match '9060'){Write-Host '[OK] RX 9060 XT = gfx1200 / RDNA 4'}"
+powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController | Where-Object {$_.Name -match 'AMD|Radeon'} ^| Select-Object -First 1; if(-not $g){exit 2}; Write-Host '[GPU]' $g.Name; if($g.Name -match '9060'){Write-Host '[OK] RX 9060 XT = gfx1200 / RDNA 4'}"
 if errorlevel 2 (
   echo [ERROR] No AMD Radeon GPU was detected by Windows.
   goto :fail
