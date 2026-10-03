@@ -42,13 +42,38 @@ echo Ollama     : http://127.0.0.1:11434
 echo ============================================================
 
 set "NEEDS_INSTALL=0"
+set "AMD_GFX1200=0"
+for /f "usebackq delims=" %%G in (`powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController ^| Where-Object {$_.Name -match 'AMD|Radeon'} ^| Select-Object -First 1; if($g -and $g.Name -match '9060'){Write-Output 1}else{Write-Output 0}"`) do set "AMD_GFX1200=%%G"
+
 if not exist "backend\.venv\Scripts\python.exe" set "NEEDS_INSTALL=1"
 if not exist "chatterbox_service\.venv\Scripts\python.exe" set "NEEDS_INSTALL=1"
 if not exist "frontend\node_modules\.bin\vite.cmd" set "NEEDS_INSTALL=1"
 if not exist "%WANGP_PYTHON%" set "NEEDS_INSTALL=1"
 if not exist "%WANGP_ROOT%\shared\api.py" set "NEEDS_INSTALL=1"
+
+rem Never reuse a stale ROCm environment on RX 9060 XT / gfx1200.
+rem A python.exe existing is not enough: real WanGP loads can crash with
+rem hipErrorLaunchFailure when a newer incompatible torch/ROCm stack survived.
+if "!AMD_GFX1200!"=="1" if exist "%WANGP_PYTHON%" (
+  "%WANGP_PYTHON%" -c "import sys,torch; ok=torch.__version__.startswith('2.12.0+rocm7.14.0') and torch.cuda.is_available() and '9060' in torch.cuda.get_device_name(0); print('[WanGP compatibility]', torch.__version__, getattr(torch.version,'hip',None), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'); sys.exit(0 if ok else 1)"
+  if errorlevel 1 (
+    echo [REPAIR] Incompatible RX 9060 XT WanGP PyTorch/ROCm environment detected.
+    if exist "%WANGP_ROOT%\.bramble-gfx1200-rocm7140-aug31" del /q "%WANGP_ROOT%\.bramble-gfx1200-rocm7140-aug31" >nul 2>nul
+    set "NEEDS_INSTALL=1"
+  )
+  if not exist "%WANGP_ROOT%\.bramble-gfx1200-rocm7140-aug31" set "NEEDS_INSTALL=1"
+  if exist "%WANGP_ROOT%\.git" (
+    for /f "delims=" %%C in ('git -C "%WANGP_ROOT%" rev-parse HEAD 2^>nul') do (
+      if /i not "%%C"=="b2b1d230acafffe724bed833440bc10d1232a7a9" (
+        echo [REPAIR] WanGP RDNA4 compatibility commit is not active.
+        set "NEEDS_INSTALL=1"
+      )
+    )
+  )
+)
+
 if "!NEEDS_INSTALL!"=="1" (
-  echo Bramble is not fully installed. Running INSTALL.bat...
+  echo Bramble installation or RX 9060 XT compatibility repair is required. Running INSTALL.bat...
   call "%~dp0INSTALL.bat"
   if errorlevel 1 exit /b 1
 )
