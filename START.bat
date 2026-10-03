@@ -18,6 +18,10 @@ rem RX 9060 XT / gfx1200 currently has an upstream WanGP/ROCm regression with
 rem experimental AOTriton fast SDPA. Bramble uses the conservative math-SDPA path.
 set "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=0"
 set "WANGP_AMD_SAFE_SDPA=1"
+rem Serialize HIP kernels on gfx1200 so launch failures are reported at the real call site.
+set "AMD_SERIALIZE_KERNEL=3"
+set "HIP_LAUNCH_BLOCKING=1"
+set "WANGP_DIAGNOSTICS=1"
 set "PID_DIR=%~dp0runtime\pids"
 
 if exist ".env" (
