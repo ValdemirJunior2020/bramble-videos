@@ -299,6 +299,14 @@ def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
         if key in safe_override_keys and value not in (None, ""):
             defaults[key] = value
 
+    if _is_gfx1200():
+        # Avoid optional post-process / upsampling passes that can push a 16 GB
+        # RDNA4 card over the edge after the main diffusion allocation.
+        defaults["temporal_upsampling"] = False
+        defaults["spatial_upsampling"] = False
+        if defaults.get("num_inference_steps"):
+            defaults["num_inference_steps"] = min(int(defaults["num_inference_steps"]), 20)
+
     def media_path(value: str) -> str:
         if not value:
             return ""
