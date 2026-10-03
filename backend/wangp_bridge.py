@@ -109,40 +109,57 @@ def _supports_reference_images(session, model_type: str, record: dict | None = N
 
 def _pick_model(session, requested: str, require_reference: bool = False) -> str:
     models = session.list_model_metadata(main_output="video", include_availability=True)
-    ready = [m for m in models if _availability_ready(m)]
-    if not ready:
-        raise RuntimeError("No locally available WanGP video model was found. Install a video model in WanGP first.")
+    if not models:
+        raise RuntimeError("WanGP did not report any video models.")
 
-    if requested:
-        if not require_reference or _supports_reference_images(session, requested):
-            return requested
-        # Do not let a text-only/incompatible model kill a Bramble render.
-        # Fall through and automatically select a compatible installed video model.
+    def compatible(record: dict) -> bool:
+        model_type = str(record.get("model_type") or "")
+        return bool(model_type) and (not require_reference or _supports_reference_images(session, model_type, record))
 
-    env_model = os.environ.get("WANGP_DEFAULT_MODEL", "").strip()
-    if env_model and (not require_reference or _supports_reference_images(session, env_model)):
-        return env_model
-
-    candidates = ready
-    if require_reference:
-        candidates = [
-            m for m in ready
-            if _supports_reference_images(session, str(m.get("model_type") or ""), m)
-        ]
-        if not candidates:
+    compatible_models = [m for m in models if compatible(m)]
+    if not compatible_models:
+        if require_reference:
             raise RuntimeError(
                 "Consistency Lock needs a WanGP video model that supports reference/start images, "
-                "but no compatible locally available model was found."
+                "but WanGP did not report any compatible video model."
             )
+        raise RuntimeError("WanGP did not report a compatible video model.")
 
-    # Prefer a fast general-purpose LTX distilled model when it also satisfies
-    # the current media requirements, then use the first compatible ready model.
-    preferred = [
-        m for m in candidates
-        if "ltx" in str(m.get("family", "")).lower()
-        and "distill" in (str(m.get("name", "")) + str(m.get("model_type", ""))).lower()
-    ]
-    return str((preferred or candidates)[0].get("model_type") or "")
+    # Respect an explicitly selected model only when it can satisfy the scene.
+    if requested:
+        selected = next((m for m in compatible_models if str(m.get("model_type") or "") == requested), None)
+        if selected is not None:
+            return requested
+
+    env_model = os.environ.get("WANGP_DEFAULT_MODEL", "").strip()
+    if env_model:
+        selected = next((m for m in compatible_models if str(m.get("model_type") or "") == env_model), None)
+        if selected is not None:
+            return env_model
+
+    # Prefer models whose files are already present, but DO NOT require local
+    # availability. WanGP downloads architecture-appropriate model files on demand.
+    ready = [m for m in compatible_models if _availability_ready(m)]
+    pool = ready or compatible_models
+
+    # Prefer lighter/faster families first on a 16 GB local GPU, while still
+    # honoring reference-image capability when Consistency Lock is enabled.
+    def rank(record: dict) -> tuple:
+        text = " ".join(
+            str(record.get(k, "") or "").lower()
+            for k in ("family", "name", "model_type", "description")
+        )
+        preferred = 0
+        if "ltx" in text:
+            preferred -= 30
+        if "distill" in text or "fast" in text:
+            preferred -= 20
+        if "1.3b" in text:
+            preferred -= 10
+        availability_penalty = 0 if _availability_ready(record) else 100
+        return (availability_penalty + preferred, str(record.get("name") or record.get("model_type") or ""))
+
+    return str(sorted(pool, key=rank)[0].get("model_type") or "")
 
 
 def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
@@ -286,7 +303,14 @@ def _run_generation(job_id: str, req: GenerateRequest):
             settings, schema = _build_settings(session, req)
             _active_model = settings["model_type"]
             _model_status = "Generating"
-            _set_job(job_id, state="generating", status="Preparing", phase="Preparing", progress=1, model_type=settings["model_type"], settings=settings, schema=schema, seed=settings.get("seed"))
+            try:
+                availability = session.get_model_availability(settings["model_type"]) or {}
+            except Exception:
+                availability = {}
+            is_local = _availability_ready({"availability": availability})
+            initial_phase = "Preparing" if is_local else "Downloading model"
+            initial_status = "Preparing WanGP model" if is_local else "First run: WanGP is downloading the required video model files"
+            _set_job(job_id, state="generating", status=initial_status, phase=initial_phase, progress=1, model_type=settings["model_type"], settings=settings, schema=schema, seed=settings.get("seed"))
 
             class Callbacks:
                 def on_progress(self, update):
