@@ -65,6 +65,25 @@ def _init_session():
             return _session
         if not (WANGP_ROOT / "shared" / "api.py").exists():
             raise RuntimeError(f"WanGP is not installed at {WANGP_ROOT}")
+        # On Windows ROCm / RDNA4 gfx1200, WanGP currently has an upstream
+        # regression where experimental AOTriton / flash SDPA can fail with
+        # hipErrorLaunchFailure or hipErrorInvalidValue. Force the conservative
+        # PyTorch math SDPA backend when Bramble safe mode is enabled.
+        if os.environ.get("WANGP_AMD_SAFE_SDPA", "0") == "1":
+            os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "0"
+            import torch
+            try:
+                torch.backends.cuda.enable_flash_sdp(False)
+            except Exception:
+                pass
+            try:
+                torch.backends.cuda.enable_mem_efficient_sdp(False)
+            except Exception:
+                pass
+            try:
+                torch.backends.cuda.enable_math_sdp(True)
+            except Exception:
+                pass
         from shared.api import init
         profile = os.environ.get("WANGP_MEMORY_PROFILE", "4")
         attention = os.environ.get("WANGP_ATTENTION", "sdpa")
@@ -367,7 +386,7 @@ def _run_generation(job_id: str, req: GenerateRequest):
 @app.get("/health")
 def health():
     installed = (WANGP_ROOT / "shared" / "api.py").exists()
-    info = {"installed": installed, "ready": False, "root": str(WANGP_ROOT), "commit": _git_commit(), "attention": os.environ.get("WANGP_ATTENTION", "sdpa"), "memory_profile": os.environ.get("WANGP_MEMORY_PROFILE", "4"), "active_model": _active_model, "model_status": _model_status, "session": "Connected" if _session is not None else "Offline"}
+    info = {"installed": installed, "ready": False, "root": str(WANGP_ROOT), "commit": _git_commit(), "attention": os.environ.get("WANGP_ATTENTION", "sdpa"), "attention_backend": "math-sdpa-safe" if os.environ.get("WANGP_AMD_SAFE_SDPA", "0") == "1" else "default", "memory_profile": os.environ.get("WANGP_MEMORY_PROFILE", "4"), "active_model": _active_model, "model_status": _model_status, "session": "Connected" if _session is not None else "Offline"}
     try:
         import torch
         info["pytorch"] = torch.__version__
