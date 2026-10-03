@@ -49,6 +49,12 @@ if "!NEEDS_INSTALL!"=="1" (
   if errorlevel 1 exit /b 1
 )
 
+rem After a git pull, do not reuse stale Bramble Python processes that still
+rem have old code loaded in memory. Restart only listeners whose command line
+rem identifies them as this Bramble backend / WanGP bridge. Shared services are untouched.
+powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalPort %WANGP_PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$c.OwningProcess) -ErrorAction SilentlyContinue; if($p -and $p.CommandLine -match 'uvicorn.+wangp_bridge:app'){Write-Host '[RESTART] Stale Bramble WanGP bridge'; Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 700}}"
+powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalPort %BACKEND_PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$c.OwningProcess) -ErrorAction SilentlyContinue; if($p -and $p.CommandLine -match 'uvicorn.+app.main:app'){Write-Host '[RESTART] Stale Bramble backend'; Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 700}}"
+
 rem Ollama is shared. Start it only if absent, and never claim ownership of it.
 netstat -ano | findstr ":11434 " | findstr "LISTENING" >nul
 if errorlevel 1 (
