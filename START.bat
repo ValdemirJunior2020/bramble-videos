@@ -14,8 +14,10 @@ set "WANGP_ROOT=%~dp0runtime\WanGP"
 set "WANGP_MEMORY_PROFILE=4"
 set "WANGP_ATTENTION=sdpa"
 set "MIOPEN_FIND_MODE=FAST"
-rem WanGP's wgp.py sets this for RDNA 3/4 SDPA. Bramble launches shared.api directly.
-set "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1"
+rem RX 9060 XT / gfx1200 currently has an upstream WanGP/ROCm regression with
+rem experimental AOTriton fast SDPA. Bramble uses the conservative math-SDPA path.
+set "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=0"
+set "WANGP_AMD_SAFE_SDPA=1"
 set "PID_DIR=%~dp0runtime\pids"
 
 if exist ".env" (
