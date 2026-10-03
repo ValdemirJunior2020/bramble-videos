@@ -23,14 +23,16 @@ def target_resolution(aspect: str, custom_width: int | None = None, custom_heigh
     # Conservative native generation sizes for a 16 GB RDNA4 card. Final output is
     # still resized/cropped by Bramble's FFmpeg finishing pipeline.
     return {
-        "16:9": (832, 480),
-        "9:16": (480, 832),
-        "1:1": (640, 640),
-        "4:5": (576, 720),
-    }.get(aspect, (min(custom_width or 832, 960), min(custom_height or 480, 960)))
+        # gfx1200 / 16 GB safe native AI sizes. Bramble upscales/crops during
+        # final FFmpeg finishing, so these do not change the requested output size.
+        "16:9": (512, 288),
+        "9:16": (288, 512),
+        "1:1": (384, 384),
+        "4:5": (384, 480),
+    }.get(aspect, (min(custom_width or 512, 512), min(custom_height or 288, 512)))
 
 
-def split_duration(seconds: float, max_shot_seconds: float = 6.0) -> list[float]:
+def split_duration(seconds: float, max_shot_seconds: float = 2.5) -> list[float]:
     seconds = max(1.0, float(seconds or 1.0))
     if seconds <= max_shot_seconds:
         return [seconds]
