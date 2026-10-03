@@ -18,6 +18,15 @@ class WanGPError(RuntimeError):
     pass
 
 
+def _low_vram_resolution(aspect: str) -> tuple[int, int]:
+    return {
+        "16:9": (384, 224),
+        "9:16": (224, 384),
+        "1:1": (320, 320),
+        "4:5": (320, 400),
+    }.get(aspect, (384, 224))
+
+
 class WanGPService:
     def __init__(self) -> None:
         self.base_url = settings.wangp_bridge_url.rstrip("/")
@@ -111,29 +120,62 @@ class WanGPService:
             }
             (out_dir / f"prompt-{shot_index:02d}.json").write_text(json.dumps({"prompt": prompt, "negative_prompt": scene.negative_prompt, "references": refs}, indent=2), encoding="utf-8")
             (out_dir / f"settings-{shot_index:02d}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            data = await self._request("POST", "/generate", json=payload, timeout=30.0)
-            job_id = data["job_id"]
-            scene.generation_job_id = job_id
-            scene.generation_state = "generating"
-            if on_update is not None:
-                on_update()
-            while True:
-                status = await self._request("GET", f"/jobs/{job_id}", timeout=15.0)
-                scene.generation_phase = status.get("phase") or status.get("status") or "Generating"
-                scene.generation_progress = int(status.get("progress") or 0)
-                scene.generation_current_step = status.get("current_step")
-                scene.generation_total_steps = status.get("total_steps")
-                scene.preview_path = status.get("preview_path") or scene.preview_path
-                if status.get("seed") is not None:
-                    scene.seed = int(status["seed"])
+            async def run_job(job_payload: dict) -> dict:
+                data = await self._request("POST", "/generate", json=job_payload, timeout=30.0)
+                job_id = data["job_id"]
+                scene.generation_job_id = job_id
+                scene.generation_state = "generating"
                 if on_update is not None:
                     on_update()
-                if status["state"] in {"complete", "failed", "cancelled"}:
-                    if status["state"] != "complete":
-                        scene.generation_state = status["state"]
-                        raise WanGPError(status.get("error") or f"WanGP generation {status['state']}")
-                    break
-                await asyncio.sleep(1.0)
+                while True:
+                    status = await self._request("GET", f"/jobs/{job_id}", timeout=15.0)
+                    scene.generation_phase = status.get("phase") or status.get("status") or "Generating"
+                    scene.generation_progress = int(status.get("progress") or 0)
+                    scene.generation_current_step = status.get("current_step")
+                    scene.generation_total_steps = status.get("total_steps")
+                    scene.preview_path = status.get("preview_path") or scene.preview_path
+                    if status.get("seed") is not None:
+                        scene.seed = int(status["seed"])
+                    if on_update is not None:
+                        on_update()
+                    if status["state"] in {"complete", "failed", "cancelled"}:
+                        return status
+                    await asyncio.sleep(1.0)
+
+            status = await run_job(payload)
+            if status["state"] != "complete":
+                message = status.get("error") or f"WanGP generation {status['state']}"
+                lowered = message.lower()
+                low_vram = (
+                    "vram" in lowered
+                    or "out of memory" in lowered
+                    or "insufficient" in lowered
+                    or "unsufficient" in lowered
+                    or "memory" in lowered
+                )
+                if status["state"] == "failed" and low_vram:
+                    safe_w, safe_h = _low_vram_resolution(project.aspect)
+                    payload["resolution"] = f"{safe_w}x{safe_h}"
+                    payload["duration_seconds"] = min(float(payload["duration_seconds"]), 2.0)
+                    payload["preset"] = "fast"
+                    overrides = dict(payload.get("overrides") or {})
+                    overrides.pop("temporal_upsampling", None)
+                    overrides.pop("spatial_upsampling", None)
+                    overrides.pop("motion_amplitude", None)
+                    if "num_inference_steps" in overrides:
+                        overrides["num_inference_steps"] = min(int(overrides["num_inference_steps"]), 12)
+                    payload["overrides"] = overrides
+                    scene.generation_phase = "Retrying with RX 9060 XT low-VRAM profile"
+                    scene.generation_progress = 0
+                    if on_update is not None:
+                        on_update()
+                    (out_dir / f"settings-{shot_index:02d}-low-vram-retry.json").write_text(
+                        json.dumps(payload, indent=2), encoding="utf-8"
+                    )
+                    status = await run_job(payload)
+                if status["state"] != "complete":
+                    scene.generation_state = status["state"]
+                    raise WanGPError(status.get("error") or message)
             produced = Path(status.get("output_path") or target)
             if not produced.exists():
                 raise WanGPError("WanGP reported success but the generated video file was not found.")
