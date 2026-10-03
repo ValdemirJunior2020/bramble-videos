@@ -44,8 +44,32 @@ ready = [m for m in models if available(m)]
 if not ready:
     raise SystemExit("No WanGP video model is locally available. Open Bramble after install and install a supported model.")
 
-preferred = [m for m in ready if "ltx" in str(m.get("family", "")).lower() and "distill" in (str(m.get("name", "")) + str(m.get("model_type", ""))).lower()]
-model_type = str((preferred or ready)[0]["model_type"])
+def model_text(m):
+    return " ".join(str(m.get(k, "") or "").lower() for k in ("family", "name", "model_type", "description"))
+
+gfx1200 = torch.cuda.is_available() and (
+    "9060" in torch.cuda.get_device_name(0)
+    or "gfx1200" in str(getattr(torch.cuda.get_device_properties(0), "gcnArchName", "") or "")
+)
+pool = [m for m in ready if "ltx" not in model_text(m)] if gfx1200 else ready
+pool = pool or ready
+
+def rank(m):
+    text = model_text(m)
+    score = 0
+    if gfx1200:
+        if "1.3b" in text:
+            score -= 80
+        if "wan" in text:
+            score -= 40
+        if "ltx" in text:
+            score += 500
+    else:
+        if "ltx" in text and "distill" in text:
+            score -= 30
+    return (score, str(m.get("name") or m.get("model_type") or ""))
+
+model_type = str(sorted(pool, key=rank)[0]["model_type"])
 settings = session.get_default_settings(model_type)
 settings.update({
     "model_type": model_type,
