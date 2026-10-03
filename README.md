@@ -20,8 +20,8 @@ Primary validated configuration target:
 - RDNA 4 / `gfx1200`
 - Windows 11
 - 32 GB system RAM
-- Python 3.11 for the WanGP environment
-- ROCm/TheRock PyTorch selected by WanGP's current AMD auto-installer for `gfx1200`
+- Python 3.12 for the WanGP environment
+- RX 9060 XT compatibility stack: PyTorch `2.12.0+rocm7.14.0` with WanGP pinned to the validated RDNA4 revision
 - WanGP memory profile 4
 - SDPA attention by default
 
@@ -53,7 +53,7 @@ WanGP stays in `runtime/WanGP` by default and is ignored by Git. You can set `WA
 
 ## Install
 
-1. Install Git, Node.js, FFmpeg/FFprobe, Python for Bramble, and **Python 3.11** for WanGP.
+1. Install Git, Node.js, FFmpeg/FFprobe, Python for Bramble, and **Python 3.12** for WanGP.
 2. Double-click `INSTALL.bat`.
 3. The installer:
    - detects the AMD GPU and reports RX 9060 XT as `gfx1200`;
