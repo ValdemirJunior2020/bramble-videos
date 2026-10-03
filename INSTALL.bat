@@ -92,16 +92,37 @@ if errorlevel 1 (
 
 pushd "!WANGP_ROOT!"
 
-rem Keep WanGP source current. Model/download folders remain untouched.
-git pull --ff-only >> "%LOG%" 2>&1
-
 set "WANGP_PYTHON=!WANGP_ROOT!\env_venv\Scripts\python.exe"
-set "WANGP_GFX1200_MARKER=!WANGP_ROOT!\.bramble-gfx1200-rocm10"
+set "WANGP_GFX1200_MARKER=!WANGP_ROOT!\.bramble-gfx1200-rocm7140-aug31"
+set "WANGP_GFX1200_PIN=b2b1d230acafffe724bed833440bc10d1232a7a9"
 
 if "!AMD_GFX1200!"=="1" (
-  rem WanGP's current Windows AMD guide maps RX 9060 XT to gfx1200 and uses
-  rem stable TheRock ROCm wheels. Older auto environments may target the wrong
-  rem architecture, which can surface as hipErrorLaunchFailure.
+  rem Temporary RX 9060 XT compatibility pin. Upstream WanGP issue #2272
+  rem reports RDNA4 regressions after Aug 31. Keep Bramble current, but hold the
+  rem embedded WanGP source at the last Aug 31 commit until upstream is fixed.
+  echo [COMPAT] Pinning WanGP runtime to Aug 31 known-good RDNA4 source...
+  git fetch origin >> "%LOG%" 2>&1
+  if errorlevel 1 (
+    popd
+    echo [ERROR] Could not fetch WanGP compatibility revision.
+    goto :fail
+  )
+  git checkout --detach !WANGP_GFX1200_PIN! >> "%LOG%" 2>&1
+  if errorlevel 1 (
+    popd
+    echo [ERROR] Could not pin WanGP to the RDNA4 compatibility revision.
+    goto :fail
+  )
+) else (
+  rem Non-gfx1200 systems continue following current WanGP.
+  git checkout main >> "%LOG%" 2>&1
+  git pull --ff-only >> "%LOG%" 2>&1
+)
+
+if "!AMD_GFX1200!"=="1" (
+  rem RX 9060 XT compatibility stack: Windows + gfx1200 + ROCm 7.14.0.
+  rem ROCm 7.14.1/10.0.0 have current RDNA4 kernel regressions during real
+  rem model workloads even when simple GPU smoke tests pass.
   if not exist "!WANGP_GFX1200_MARKER!" (
     echo [REPAIR] Building WanGP specifically for RX 9060 XT / gfx1200...
     powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalPort 8020 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$c.OwningProcess) -ErrorAction SilentlyContinue; if($p -and $p.CommandLine -match 'wangp_bridge:app'){Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 700}}"
@@ -118,8 +139,8 @@ if "!AMD_GFX1200!"=="1" (
       popd
       goto :fail
     )
-    echo Installing official stable ROCm 10 / PyTorch 2.13 gfx1200 wheels...
-    "!WANGP_PYTHON!" -m pip install "torch[device-gfx1200]==2.13.0+rocm10.0.0" "torchvision[device-gfx1200]==0.28.0+rocm10.0.0" "torchaudio==2.11.0.2+rocm10.0.0" --index-url https://stable.repo.amd.com/rocm/whl-next/ >> "%LOG%" 2>&1
+    echo Installing known-good ROCm 7.14.0 / PyTorch 2.12 gfx1200 wheels...
+    "!WANGP_PYTHON!" -m pip install --index-url https://repo.amd.com/rocm/whl-multi-arch/ "torch[device-gfx1200]==2.12.0+rocm7.14.0" "torchvision[device-gfx1200]==0.27.0+rocm7.14.0" "torchaudio==2.11.0+rocm7.14.0" >> "%LOG%" 2>&1
     if errorlevel 1 (
       popd
       echo [ERROR] gfx1200 ROCm PyTorch installation failed. See install.log.
@@ -174,7 +195,7 @@ if errorlevel 1 (
   echo [ERROR] WanGP ROCm GPU kernel test failed. See install.log.
   goto :fail
 )
-if "!AMD_GFX1200!"=="1" > "!WANGP_GFX1200_MARKER!" echo gfx1200 rocm10 torch2.13 verified %date% %time%
+if "!AMD_GFX1200!"=="1" > "!WANGP_GFX1200_MARKER!" echo gfx1200 rocm7.14.0 torch2.12 aug31-wangp verified %date% %time%
 popd
 echo [OK] Official WanGP AMD environment and real GPU kernel verified
 
