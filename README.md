@@ -195,6 +195,8 @@ CI compiles the Bramble backend plus WanGP bridge/smoke scripts, runs the Python
 
 **Selected model is missing** — install/download that model through the supported WanGP model mechanism, or select another available model in Bramble.
 
+**RX 9060 XT / gfx1200 generation crash** — Bramble forces the validated ROCm stack, math-SDPA/profile 4, FP16, and avoids LTX automatic selection because LTX-2 has a known gfx1200 failure path. Bramble prefers a smaller Wan 1.3B model when WanGP exposes one.
+
 **Out of VRAM** — use Balanced or Fast Preview, keep profile 4/SDPA, and avoid simultaneous GPU-heavy Ollama workloads while a WanGP scene is rendering.
 
 **AMD AMF unavailable** — Bramble falls back to `libx264`; generation itself can still work.
