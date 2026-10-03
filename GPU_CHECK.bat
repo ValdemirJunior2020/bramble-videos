@@ -21,7 +21,9 @@ if errorlevel 1 (echo [clinfo] Not found in PATH.) else (echo [clinfo gfx target
 echo [WanGP root] %WANGP_ROOT%
 if exist "%WANGP_ROOT%\shared\api.py" (echo [OK] WanGP source detected.) else (echo [WARN] WanGP source missing.)
 if exist "%WANGP_PYTHON%" (
-  "%WANGP_PYTHON%" -c "import sys,torch; print('[Python]',sys.version.split()[0]); print('[PyTorch]', torch.__version__); print('[ROCm/HIP]', getattr(torch.version,'hip',None)); print('[GPU available]', torch.cuda.is_available()); print('[Device]', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU ONLY'); p=torch.cuda.get_device_properties(0) if torch.cuda.is_available() else None; print('[Architecture]',getattr(p,'gcnArchName','') if p else ''); print('[VRAM GB]', round(p.total_memory/1024**3,1) if p else 0)"
+  set "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1"
+  "%WANGP_PYTHON%" -c "import sys,torch; print('[Python]',sys.version.split()[0]); print('[PyTorch]', torch.__version__); print('[Expected for RX 9060 XT] gfx1200 / PyTorch 2.13.0+rocm10.0.0'); print('[ROCm/HIP]', getattr(torch.version,'hip',None)); print('[GPU available]', torch.cuda.is_available()); print('[Device]', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU ONLY'); p=torch.cuda.get_device_properties(0) if torch.cuda.is_available() else None; print('[Architecture]',getattr(p,'gcnArchName','') if p else ''); print('[VRAM GB]', round(p.total_memory/1024**3,1) if p else 0); x=torch.randn((128,128),device='cuda') if torch.cuda.is_available() else None; y=x@x if x is not None else None; torch.cuda.synchronize() if y is not None else None; print('[GPU kernel smoke]', 'PASS' if y is not None else 'SKIPPED')"
+  if errorlevel 1 echo [ERROR] GPU kernel smoke failed - WanGP ROCm environment needs repair.
 ) else (
   echo [WARN] WanGP Python environment missing: %WANGP_PYTHON%
 )
