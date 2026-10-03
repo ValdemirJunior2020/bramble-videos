@@ -56,6 +56,26 @@ def _git_commit() -> str:
         return ""
 
 
+def _is_gfx1200() -> bool:
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False
+        name = str(torch.cuda.get_device_name(0) or "").lower()
+        props = torch.cuda.get_device_properties(0)
+        arch = str(getattr(props, "gcnArchName", "") or getattr(props, "gcn_arch_name", "") or "").lower()
+        return "9060" in name or "gfx1200" in arch
+    except Exception:
+        return False
+
+
+def _model_text(record: dict) -> str:
+    return " ".join(
+        str(record.get(k, "") or "").lower()
+        for k in ("family", "name", "model_type", "description")
+    )
+
+
 def _init_session():
     global _session
     if _session is not None:
@@ -87,7 +107,12 @@ def _init_session():
         from shared.api import init
         profile = os.environ.get("WANGP_MEMORY_PROFILE", "4")
         attention = os.environ.get("WANGP_ATTENTION", "sdpa")
-        _session = init(root=WANGP_ROOT, output_dir=OUTPUT_ROOT, cli_args=["--attention", attention, "--profile", profile], console_output=True)
+        cli_args = ["--attention", attention, "--profile", profile]
+        # WanGP's emergency AMD fallback uses FP16 with SDPA/profile 4.
+        # Keep this scoped to gfx1200 so other GPUs retain upstream defaults.
+        if _is_gfx1200():
+            cli_args.append("--fp16")
+        _session = init(root=WANGP_ROOT, output_dir=OUTPUT_ROOT, cli_args=cli_args, console_output=True)
         return _session
 
 
@@ -136,6 +161,15 @@ def _pick_model(session, requested: str, require_reference: bool = False) -> str
         return bool(model_type) and (not require_reference or _supports_reference_images(session, model_type, record))
 
     compatible_models = [m for m in models if compatible(m)]
+
+    # LTX-2 currently has a known WanGP/ROCm gfx1200 failure path on RX 9060 XT.
+    # On this GPU, keep LTX out of automatic/selected generation and prefer
+    # the smaller Wan 1.3B family recommended by WanGP's fallback guidance.
+    if _is_gfx1200():
+        non_ltx = [m for m in compatible_models if "ltx" not in _model_text(m)]
+        if non_ltx:
+            compatible_models = non_ltx
+
     if not compatible_models:
         if require_reference:
             raise RuntimeError(
@@ -163,18 +197,27 @@ def _pick_model(session, requested: str, require_reference: bool = False) -> str
 
     # Prefer lighter/faster families first on a 16 GB local GPU, while still
     # honoring reference-image capability when Consistency Lock is enabled.
+    gfx1200 = _is_gfx1200()
+
     def rank(record: dict) -> tuple:
-        text = " ".join(
-            str(record.get(k, "") or "").lower()
-            for k in ("family", "name", "model_type", "description")
-        )
+        text = _model_text(record)
         preferred = 0
-        if "ltx" in text:
-            preferred -= 30
-        if "distill" in text or "fast" in text:
-            preferred -= 20
-        if "1.3b" in text:
-            preferred -= 10
+        if gfx1200:
+            if "1.3b" in text:
+                preferred -= 80
+            if "wan" in text:
+                preferred -= 40
+            if "distill" in text or "fast" in text:
+                preferred -= 15
+            if "ltx" in text:
+                preferred += 500
+        else:
+            if "ltx" in text:
+                preferred -= 30
+            if "distill" in text or "fast" in text:
+                preferred -= 20
+            if "1.3b" in text:
+                preferred -= 10
         availability_penalty = 0 if _availability_ready(record) else 100
         return (availability_penalty + preferred, str(record.get("name") or record.get("model_type") or ""))
 
@@ -197,6 +240,10 @@ def _build_settings(session, req: GenerateRequest) -> tuple[dict, dict]:
     defaults["seed"] = resolved_seed
     defaults["override_profile"] = int(os.environ.get("WANGP_MEMORY_PROFILE", "4"))
     defaults["override_attention"] = os.environ.get("WANGP_ATTENTION", "sdpa")
+
+    # Keep the RDNA4 fallback conservative even if the UI sends a heavier preset.
+    if _is_gfx1200():
+        defaults["override_profile"] = 4
 
     if req.preset == "max":
         try:
