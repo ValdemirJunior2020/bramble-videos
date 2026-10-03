@@ -64,11 +64,16 @@ if exist ".env" (
 if not "!WANGP_ROOT:~1,1!"==":" set "WANGP_ROOT=%~dp0!WANGP_ROOT!"
 if not exist "runtime" mkdir "runtime"
 
-powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController | Where-Object {$_.Name -match 'AMD|Radeon'} | Select-Object -First 1; if(-not $g){exit 2}; Write-Host '[GPU]' $g.Name; if($g.Name -match '9060'){Write-Host '[OK] RX 9060 XT = gfx1200 / RDNA 4'}"
-if errorlevel 2 (
+set "AMD_GPU_NAME="
+for /f "usebackq delims=" %%G in (`powershell -NoProfile -Command "$g=Get-CimInstance Win32_VideoController ^| Where-Object {$_.Name -match 'AMD|Radeon'} ^| Select-Object -First 1; if($g){$g.Name}"`) do set "AMD_GPU_NAME=%%G"
+if not defined AMD_GPU_NAME (
   echo [ERROR] No AMD Radeon GPU was detected by Windows.
   goto :fail
 )
+echo [GPU] !AMD_GPU_NAME!
+set "AMD_GFX1200=0"
+echo !AMD_GPU_NAME! | findstr /i "9060" >nul && set "AMD_GFX1200=1"
+if "!AMD_GFX1200!"=="1" echo [OK] RX 9060 XT = gfx1200 / RDNA 4
 
 if not exist "!WANGP_ROOT!\shared\api.py" (
   echo Cloning official WanGP...
@@ -86,37 +91,92 @@ if errorlevel 1 (
 )
 
 pushd "!WANGP_ROOT!"
-if not exist "env_venv\Scripts\python.exe" (
-  echo Running WanGP official automatic installer for the detected AMD GPU...
-  py -3.12 setup.py install --env venv --auto >> "%LOG%" 2>&1
-  if errorlevel 1 (
-    popd
-    echo [ERROR] WanGP official AMD auto-install failed. See install.log.
-    goto :fail
+
+rem Keep WanGP source current. Model/download folders remain untouched.
+git pull --ff-only >> "%LOG%" 2>&1
+
+set "WANGP_PYTHON=!WANGP_ROOT!\env_venv\Scripts\python.exe"
+set "WANGP_GFX1200_MARKER=!WANGP_ROOT!\.bramble-gfx1200-rocm10"
+
+if "!AMD_GFX1200!"=="1" (
+  rem WanGP's current Windows AMD guide maps RX 9060 XT to gfx1200 and uses
+  rem stable TheRock ROCm wheels. Older auto environments may target the wrong
+  rem architecture, which can surface as hipErrorLaunchFailure.
+  if not exist "!WANGP_GFX1200_MARKER!" (
+    echo [REPAIR] Building WanGP specifically for RX 9060 XT / gfx1200...
+    powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalPort 8020 -State Listen -ErrorAction SilentlyContinue ^| Select-Object -First 1; if($c){$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$c.OwningProcess) -ErrorAction SilentlyContinue; if($p -and $p.CommandLine -match 'wangp_bridge:app'){Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 700}}"
+    if exist "env_venv" rmdir /s /q "env_venv"
+    py -3.12 -m venv "env_venv" >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      popd
+      echo [ERROR] Could not create WanGP Python 3.12 environment.
+      goto :fail
+    )
+    set "WANGP_PYTHON=!WANGP_ROOT!\env_venv\Scripts\python.exe"
+    "!WANGP_PYTHON!" -m pip install --upgrade pip >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      popd
+      goto :fail
+    )
+    echo Installing official stable ROCm 10 / PyTorch 2.13 gfx1200 wheels...
+    "!WANGP_PYTHON!" -m pip install "torch[device-gfx1200]==2.13.0+rocm10.0.0" "torchvision[device-gfx1200]==0.28.0+rocm10.0.0" "torchaudio==2.11.0.2+rocm10.0.0" --index-url https://stable.repo.amd.com/rocm/whl-next/ >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      popd
+      echo [ERROR] gfx1200 ROCm PyTorch installation failed. See install.log.
+      goto :fail
+    )
+    "!WANGP_PYTHON!" -m pip install -r requirements.txt >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      popd
+      echo [ERROR] WanGP dependencies failed to install. See install.log.
+      goto :fail
+    )
+    "!WANGP_PYTHON!" -m pip install fastapi uvicorn >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      popd
+      goto :fail
+    )
+  ) else (
+    echo [SKIP] Verified Bramble gfx1200 ROCm environment marker found
   )
 ) else (
-  echo [SKIP] WanGP active environment already exists
+  if not exist "env_venv\Scripts\python.exe" (
+    echo Running WanGP official automatic installer for the detected AMD GPU...
+    py -3.12 setup.py install --env venv --auto >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      popd
+      echo [ERROR] WanGP official AMD auto-install failed. See install.log.
+      goto :fail
+    )
+  ) else (
+    echo [SKIP] WanGP active environment already exists
+  )
+  set "WANGP_PYTHON=!WANGP_ROOT!\env_venv\Scripts\python.exe"
+  "!WANGP_PYTHON!" -m pip install fastapi uvicorn >> "%LOG%" 2>&1
+  if errorlevel 1 (
+    popd
+    goto :fail
+  )
 )
-set "WANGP_PYTHON=!WANGP_ROOT!\env_venv\Scripts\python.exe"
+
 if not exist "!WANGP_PYTHON!" (
   popd
   echo [ERROR] WanGP environment was not created.
   goto :fail
 )
-"!WANGP_PYTHON!" -m pip install fastapi uvicorn >> "%LOG%" 2>&1
+
+echo Verifying WanGP shared.api, ROCm build and a real GPU kernel...
+set "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1"
+"!WANGP_PYTHON!" -c "import torch; from shared.api import init; print('torch',torch.__version__); print('hip',getattr(torch.version,'hip',None)); print('gpu',torch.cuda.is_available()); print('device',torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'); assert '+rocm' in torch.__version__, 'CPU/non-ROCm PyTorch installed'; assert torch.cuda.is_available(), 'ROCm GPU unavailable'; x=torch.randn((256,256),device='cuda'); y=x@x; torch.cuda.synchronize(); print('kernel-smoke',float(y[0,0]));" >> "%LOG%" 2>&1
 if errorlevel 1 (
+  if exist "!WANGP_GFX1200_MARKER!" del /q "!WANGP_GFX1200_MARKER!" >nul 2>nul
   popd
+  echo [ERROR] WanGP ROCm GPU kernel test failed. See install.log.
   goto :fail
 )
-echo Verifying WanGP shared.api and ROCm GPU acceleration...
-"!WANGP_PYTHON!" -c "import torch; from shared.api import init; print('torch',torch.__version__); print('hip',getattr(torch.version,'hip',None)); print('gpu',torch.cuda.is_available()); print('device',torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'); raise SystemExit(0 if torch.cuda.is_available() else 3)" >> "%LOG%" 2>&1
-if errorlevel 1 (
-  popd
-  echo [ERROR] WanGP ROCm PyTorch cannot see the AMD GPU. Run GPU_CHECK.bat.
-  goto :fail
-)
+if "!AMD_GFX1200!"=="1" > "!WANGP_GFX1200_MARKER!" echo gfx1200 rocm10 torch2.13 verified %date% %time%
 popd
-echo [OK] Official WanGP AMD environment and GPU acceleration verified
+echo [OK] Official WanGP AMD environment and real GPU kernel verified
 
 echo.
 echo [3/8] Preparing backend Python environment...
