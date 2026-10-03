@@ -18,6 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 WANGP_ROOT = Path(os.environ.get("WANGP_ROOT", REPO_ROOT / "runtime" / "WanGP")).expanduser().resolve()
 OUTPUT_ROOT = Path(os.environ.get("WANGP_OUTPUT_DIR", REPO_ROOT / "storage" / "wangp")).expanduser().resolve()
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+DIAGNOSTIC_ROOT = REPO_ROOT / "storage" / "diagnostics"
+DIAGNOSTIC_ROOT.mkdir(parents=True, exist_ok=True)
 if str(WANGP_ROOT) not in sys.path:
     sys.path.insert(0, str(WANGP_ROOT))
 
@@ -74,6 +76,35 @@ def _model_text(record: dict) -> str:
         str(record.get(k, "") or "").lower()
         for k in ("family", "name", "model_type", "description")
     )
+
+
+def _gpu_snapshot() -> dict:
+    data = {}
+    try:
+        import torch
+        data["torch"] = torch.__version__
+        data["hip"] = getattr(torch.version, "hip", None)
+        data["gpu_available"] = bool(torch.cuda.is_available())
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            data["gpu_name"] = torch.cuda.get_device_name(0)
+            data["architecture"] = str(getattr(props, "gcnArchName", "") or getattr(props, "gcn_arch_name", "") or "")
+            data["vram_total_gb"] = round(props.total_memory / 1024**3, 3)
+            data["vram_allocated_gb"] = round(torch.cuda.memory_allocated(0) / 1024**3, 3)
+            data["vram_reserved_gb"] = round(torch.cuda.memory_reserved(0) / 1024**3, 3)
+    except Exception as exc:
+        data["gpu_snapshot_error"] = str(exc)
+    return data
+
+
+def _write_diagnostic(job_id: str, payload: dict) -> str:
+    import json
+    path = DIAGNOSTIC_ROOT / f"{job_id}.json"
+    try:
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        return str(path)
+    except Exception:
+        return ""
 
 
 def _init_session():
@@ -369,6 +400,32 @@ def _run_generation(job_id: str, req: GenerateRequest):
             settings, schema = _build_settings(session, req)
             _active_model = settings["model_type"]
             _model_status = "Generating"
+            diagnostic = {
+                "job_id": job_id,
+                "started_at": time.time(),
+                "wangp_commit": _git_commit(),
+                "model_type": settings.get("model_type"),
+                "preset": req.preset,
+                "resolution": settings.get("resolution"),
+                "duration_seconds": settings.get("duration_seconds"),
+                "video_length": settings.get("video_length"),
+                "num_inference_steps": settings.get("num_inference_steps"),
+                "override_profile": settings.get("override_profile"),
+                "override_attention": settings.get("override_attention"),
+                "seed": settings.get("seed"),
+                "env": {
+                    "AMD_SERIALIZE_KERNEL": os.environ.get("AMD_SERIALIZE_KERNEL"),
+                    "HIP_LAUNCH_BLOCKING": os.environ.get("HIP_LAUNCH_BLOCKING"),
+                    "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"),
+                    "WANGP_AMD_SAFE_SDPA": os.environ.get("WANGP_AMD_SAFE_SDPA"),
+                },
+                "gpu_before": _gpu_snapshot(),
+                "last_phase": "Preparing",
+                "last_status": "Preparing WanGP model",
+                "last_progress": 0,
+            }
+            diagnostic_path = _write_diagnostic(job_id, diagnostic)
+            _set_job(job_id, diagnostic_log=diagnostic_path)
             try:
                 availability = session.get_model_availability(settings["model_type"]) or {}
             except Exception:
@@ -380,7 +437,19 @@ def _run_generation(job_id: str, req: GenerateRequest):
 
             class Callbacks:
                 def on_progress(self, update):
-                    _set_job(job_id, phase=_phase_label(update), status=str(getattr(update, "status", "") or "Generating"), progress=int(getattr(update, "progress", 0) or 0), current_step=getattr(update, "current_step", None), total_steps=getattr(update, "total_steps", None))
+                    phase = _phase_label(update)
+                    status = str(getattr(update, "status", "") or "Generating")
+                    progress = int(getattr(update, "progress", 0) or 0)
+                    current_step = getattr(update, "current_step", None)
+                    total_steps = getattr(update, "total_steps", None)
+                    _set_job(job_id, phase=phase, status=status, progress=progress, current_step=current_step, total_steps=total_steps)
+                    diagnostic["last_phase"] = phase
+                    diagnostic["last_status"] = status
+                    diagnostic["last_progress"] = progress
+                    diagnostic["current_step"] = current_step
+                    diagnostic["total_steps"] = total_steps
+                    diagnostic["gpu_last_progress"] = _gpu_snapshot()
+                    _write_diagnostic(job_id, diagnostic)
                 def on_status(self, text):
                     _set_job(job_id, status=str(text or ""))
                 def on_preview(self, preview):
@@ -411,7 +480,12 @@ def _run_generation(job_id: str, req: GenerateRequest):
             if not result.success:
                 message = "; ".join(str(getattr(e, "message", e)) for e in result.errors) or "WanGP generation failed."
                 state = "cancelled" if getattr(result, "cancelled", False) or getattr(active_job, "cancel_requested", False) else "failed"
-                _set_job(job_id, state=state, error=message, progress=0)
+                diagnostic["finished_at"] = time.time()
+                diagnostic["state"] = state
+                diagnostic["error"] = message
+                diagnostic["gpu_after_failure"] = _gpu_snapshot()
+                diagnostic_path = _write_diagnostic(job_id, diagnostic)
+                _set_job(job_id, state=state, error=message, progress=0, diagnostic_log=diagnostic_path)
                 return
             generated = [Path(p) for p in result.generated_files if Path(p).exists()]
             if not generated:
@@ -420,9 +494,38 @@ def _run_generation(job_id: str, req: GenerateRequest):
             target = Path(req.output_path).resolve(); target.parent.mkdir(parents=True, exist_ok=True)
             if source.resolve() != target:
                 shutil.copy2(source, target)
-            _set_job(job_id, state="complete", status="Scene complete", phase="Scene complete", progress=100, output_path=str(target), generated_files=[str(p) for p in generated])
+            diagnostic["finished_at"] = time.time()
+            diagnostic["state"] = "complete"
+            diagnostic["output_path"] = str(target)
+            diagnostic["gpu_after"] = _gpu_snapshot()
+            diagnostic_path = _write_diagnostic(job_id, diagnostic)
+            _set_job(job_id, state="complete", status="Scene complete", phase="Scene complete", progress=100, output_path=str(target), generated_files=[str(p) for p in generated], diagnostic_log=diagnostic_path)
     except Exception as exc:
-        _set_job(job_id, state="failed", error=str(exc), traceback=traceback.format_exc())
+        tb = traceback.format_exc()
+        failure = {
+            "job_id": job_id,
+            "finished_at": time.time(),
+            "state": "failed",
+            "error": str(exc),
+            "traceback": tb,
+            "active_model": _active_model,
+            "gpu_after_failure": _gpu_snapshot(),
+            "env": {
+                "AMD_SERIALIZE_KERNEL": os.environ.get("AMD_SERIALIZE_KERNEL"),
+                "HIP_LAUNCH_BLOCKING": os.environ.get("HIP_LAUNCH_BLOCKING"),
+                "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"),
+                "WANGP_AMD_SAFE_SDPA": os.environ.get("WANGP_AMD_SAFE_SDPA"),
+            },
+        }
+        with _jobs_lock:
+            previous = dict(_jobs.get(job_id) or {})
+        failure["last_phase"] = previous.get("phase")
+        failure["last_status"] = previous.get("status")
+        failure["last_progress"] = previous.get("progress")
+        failure["current_step"] = previous.get("current_step")
+        failure["total_steps"] = previous.get("total_steps")
+        diagnostic_path = _write_diagnostic(job_id, failure)
+        _set_job(job_id, state="failed", error=str(exc), traceback=tb, diagnostic_log=diagnostic_path)
     finally:
         _model_status = "Loaded" if _active_model else "Idle"
         with _jobs_lock:
@@ -493,6 +596,8 @@ def job_status(job_id: str):
     job.pop("native_job", None)
     job.pop("settings", None)
     job.pop("schema", None)
+    # Keep the UI concise, but leave the diagnostic JSON path visible so the exact
+    # crash report can be inspected after a HIP kernel failure.
     job.pop("traceback", None)
     return job
 
