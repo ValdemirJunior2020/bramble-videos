@@ -9,6 +9,24 @@ OUT = Path(__file__).resolve().parents[1] / "storage" / "wangp-smoke"
 OUT.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(ROOT))
 
+# Match the exact conservative AMD path used by the persistent Bramble bridge.
+# This must be set before WanGP imports torch-backed attention code.
+os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "0"
+os.environ["WANGP_AMD_SAFE_SDPA"] = "1"
+
+import torch  # noqa: E402
+
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
+
+if torch.cuda.is_available() and "9060" in torch.cuda.get_device_name(0):
+    if not torch.__version__.startswith("2.12.0+rocm7.14.0"):
+        raise SystemExit(
+            f"RX 9060 XT compatibility check failed: found {torch.__version__}; "
+            "expected PyTorch 2.12.0+rocm7.14.0. Run INSTALL.bat."
+        )
+
 from shared.api import init  # noqa: E402
 
 session = init(root=ROOT, output_dir=OUT, cli_args=["--attention", "sdpa", "--profile", "4"], console_output=True)
