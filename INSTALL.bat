@@ -166,8 +166,8 @@ if not exist "!WANGP_PYTHON!" (
 )
 
 echo Verifying WanGP shared.api, ROCm build and a real GPU kernel...
-set "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1"
-"!WANGP_PYTHON!" -c "import torch; from shared.api import init; print('torch',torch.__version__); print('hip',getattr(torch.version,'hip',None)); print('gpu',torch.cuda.is_available()); print('device',torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'); assert '+rocm' in torch.__version__, 'CPU/non-ROCm PyTorch installed'; assert torch.cuda.is_available(), 'ROCm GPU unavailable'; x=torch.randn((256,256),device='cuda'); y=x@x; torch.cuda.synchronize(); print('kernel-smoke',float(y[0,0]));" >> "%LOG%" 2>&1
+set "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=0"
+"!WANGP_PYTHON!" -c "import torch, torch.nn.functional as F; from shared.api import init; print('torch',torch.__version__); print('hip',getattr(torch.version,'hip',None)); print('gpu',torch.cuda.is_available()); print('device',torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'); assert '+rocm' in torch.__version__, 'CPU/non-ROCm PyTorch installed'; assert torch.cuda.is_available(), 'ROCm GPU unavailable'; torch.backends.cuda.enable_flash_sdp(False); torch.backends.cuda.enable_mem_efficient_sdp(False); torch.backends.cuda.enable_math_sdp(True); x=torch.randn((256,256),device='cuda'); y=x@x; q=torch.randn((1,8,128,64),device='cuda',dtype=torch.float16); z=F.scaled_dot_product_attention(q,q,q); torch.cuda.synchronize(); print('matmul-smoke',float(y[0,0])); print('math-sdpa-smoke',tuple(z.shape));" >> "%LOG%" 2>&1
 if errorlevel 1 (
   if exist "!WANGP_GFX1200_MARKER!" del /q "!WANGP_GFX1200_MARKER!" >nul 2>nul
   popd
