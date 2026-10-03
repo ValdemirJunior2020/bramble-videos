@@ -104,7 +104,7 @@ if "!AMD_GFX1200!"=="1" (
   rem architecture, which can surface as hipErrorLaunchFailure.
   if not exist "!WANGP_GFX1200_MARKER!" (
     echo [REPAIR] Building WanGP specifically for RX 9060 XT / gfx1200...
-    powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalPort 8020 -State Listen -ErrorAction SilentlyContinue ^| Select-Object -First 1; if($c){$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$c.OwningProcess) -ErrorAction SilentlyContinue; if($p -and $p.CommandLine -match 'wangp_bridge:app'){Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 700}}"
+    powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalPort 8020 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$c.OwningProcess) -ErrorAction SilentlyContinue; if($p -and $p.CommandLine -match 'wangp_bridge:app'){Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 700}}"
     if exist "env_venv" rmdir /s /q "env_venv"
     py -3.12 -m venv "env_venv" >> "%LOG%" 2>&1
     if errorlevel 1 (
