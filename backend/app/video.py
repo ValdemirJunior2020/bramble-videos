@@ -59,25 +59,53 @@ async def make_scene_clip(image: Path, seconds: float, project: Project, output:
     if code != 0 and encoder != "libx264":
         await _run([*base, *_encoder_args("libx264"), str(output)])
 
-async def concat_clips(clips: list[Path], output: Path, encoder: str) -> None:
+async def concat_clips(
+    clips: list[Path],
+    output: Path,
+    encoder: str,
+    target_width: int | None = None,
+    target_height: int | None = None,
+) -> None:
+    if not clips:
+        raise RuntimeError("No clips were supplied for movie assembly.")
+    missing = [str(p) for p in clips if not p.exists()]
+    if missing:
+        raise RuntimeError("Movie assembly is missing generated clips: " + ", ".join(missing))
+
     listfile = output.with_suffix(".txt")
     listfile.write_text("\n".join(f"file '{p.resolve().as_posix()}'" for p in clips), encoding="utf-8")
+
     base = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listfile), "-an"]
-    code, _, _ = await _run([*base, *_encoder_args(encoder), str(output)], allow_fail=True)
+    if target_width and target_height:
+        # Low-VRAM retries may be rendered at a smaller native size than other
+        # shots. Normalize the concatenated stream before encoding so every
+        # scene survives the final movie assembly cleanly.
+        base += [
+            "-vf",
+            f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
+            f"crop={target_width}:{target_height},setsar=1",
+        ]
+
+    code, _, err = await _run([*base, *_encoder_args(encoder), "-pix_fmt", "yuv420p", str(output)], allow_fail=True)
     if code != 0 and encoder != "libx264":
-        await _run([*base, *_encoder_args("libx264"), str(output)])
+        code, _, err = await _run([*base, *_encoder_args("libx264"), "-pix_fmt", "yuv420p", str(output)], allow_fail=True)
+    if code != 0:
+        raise RuntimeError("Clip assembly failed: " + err[-2000:])
 
 async def render_final(visuals: Path, narration: Path, subtitles: Path, output: Path, project: Project, encoder: str) -> str:
     cmd = ["ffmpeg", "-y", "-i", str(visuals), "-i", str(narration)]
     filters: list[str] = []
     next_input = 2
-    audio_map = ["-map", "1:a:0"]
+    # Pad narration with silence. Keeping -shortest then makes the visual stream
+    # the master duration, so a shorter narration can never cut off later clips.
+    filters.append("[1:a]apad[narr]")
+    audio_map = ["-map", "[narr]"]
 
     if project.background_music_path and Path(project.background_music_path).exists():
         music_index = next_input
         next_input += 1
         cmd += ["-stream_loop", "-1", "-i", project.background_music_path]
-        filters += [f"[{music_index}:a]volume={project.music_volume}[m]", "[1:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]"]
+        filters += [f"[{music_index}:a]volume={project.music_volume}[m]", "[narr][m]amix=inputs=2:duration=first:dropout_transition=2[a]"]
         audio_map = ["-map", "[a]"]
 
     video_label = "v0"
