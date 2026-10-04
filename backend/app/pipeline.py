@@ -12,6 +12,7 @@ from .config import settings
 from .generation.wangp import WanGPError, wangp_service
 from .models import Project
 from .video import concat_clips, detect_encoder, make_scene_clip, render_final
+from .comfy import dimensions
 
 
 def project_dir(project_id: str) -> Path:
@@ -82,7 +83,8 @@ async def _generate_wangp_scene(project: Project, scene, scene_index: int, total
             final_clip.write_bytes(produced.read_bytes())
     else:
         encoder = await detect_encoder()
-        await concat_clips(outputs, final_clip, encoder)
+        width, height = dimensions(project)
+        await concat_clips(outputs, final_clip, encoder, width, height)
     scene.clip_path = str(final_clip)
     scene.generation_state = "complete"
     scene.generation_progress = 100
@@ -193,13 +195,29 @@ async def render_project(project_id: str, regenerate_all_images: bool = False) -
                 clip = await _generate_comfy_scene(project, scene, i, total, regenerate_all_images)
             clips.append(clip)
 
+        if len(clips) != len(project.scenes):
+            raise RuntimeError(
+                f"Movie assembly received {len(clips)} clips for {len(project.scenes)} scenes. "
+                "Refusing to create an incomplete movie."
+            )
+        missing_scene_clips = [
+            str(scene.scene_number)
+            for scene, clip in zip(project.scenes, clips)
+            if not clip.exists()
+        ]
+        if missing_scene_clips:
+            raise RuntimeError(
+                "Movie assembly is missing completed scene clips: " + ", ".join(missing_scene_clips)
+            )
+
         encoder = await detect_encoder()
         project.video_encoder = encoder
-        project.stage = f"Assembling cinematic clips ({encoder})"
+        project.stage = f"Assembling all {len(clips)} cinematic scene clips ({encoder})"
         project.progress = 84
         save_project(project)
         visuals = folder / "visuals.mp4"
-        await concat_clips(clips, visuals, encoder)
+        width, height = dimensions(project)
+        await concat_clips(clips, visuals, encoder, width, height)
 
         project.stage = "Rendering narration, phrase subtitles, music and watermark"
         project.progress = 91
