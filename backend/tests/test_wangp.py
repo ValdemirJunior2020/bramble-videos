@@ -9,8 +9,8 @@ def test_wangp_is_default_generator():
 
 
 def test_rx9060_safe_native_sizes():
-    assert target_resolution("16:9") == (832, 480)
-    assert target_resolution("9:16") == (480, 832)
+    assert target_resolution("16:9") == (512, 288)
+    assert target_resolution("9:16") == (288, 512)
     assert max(target_resolution("1:1")) <= 640
 
 
@@ -76,7 +76,7 @@ def test_wangp_scene_request_to_real_output_path(tmp_path):
     outputs = asyncio.run(service.generate_scene(project, scene, tmp_path))
     assert outputs == [tmp_path / "clip.mp4"]
     assert captured["duration_seconds"] == 3.0
-    assert captured["resolution"] == "832x480"
+    assert captured["resolution"] == "512x288"
     assert captured["preset"] == "balanced"
     assert scene.seed == 12345
     assert scene.generation_state == "complete"
